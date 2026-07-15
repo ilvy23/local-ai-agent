@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from companion.memory.vectors import _load_extension, _pack
+from agent.memory.vectors import _load_extension, _pack
 
 
 def _probe_dim(llm: Any, model: str) -> int:

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from companion.safety import RiskLevel, classify_command
+from agent.safety import RiskLevel, classify_command
 
 # Minimal config with the safety defaults the classifier reads. The real
 # DEFAULT_CONFIG supplies these; tests that exercise config extension override

@@ -1,7 +1,7 @@
 """System environment facts injected into every chat context.
 
 Gives the model persistent awareness of *where it's running* — the OS, hostname,
-the user's home/Documents/Downloads paths, and the companion project dir — so it
+the user's home/Documents/Downloads paths, and the agent project dir — so it
 can reference real paths without guessing. Computed live each session (paths/OS
 don't change often, and live means never stale). Custom user facts still live in
 the editable `facts` memory alongside this.
@@ -38,7 +38,7 @@ def _osname() -> str:
 
 def system_facts(config: dict[str, Any]) -> list[str]:
     """Human-readable environment lines for the system prompt."""
-    from companion.config import PROJECT_ROOT
+    from agent.config import PROJECT_ROOT
 
     home = Path.home()
     lines: list[str] = []
@@ -53,6 +53,6 @@ def system_facts(config: dict[str, Any]) -> list[str]:
         if path:
             lines.append(f"{label} folder: {path}")
 
-    lines.append(f"Companion project directory: {PROJECT_ROOT}")
+    lines.append(f"Agent project directory: {PROJECT_ROOT}")
 
     return lines

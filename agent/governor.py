@@ -87,12 +87,12 @@ def pause_reason(config: dict, *, ignore_foreground: bool = False) -> str | None
     `ignore_foreground=True` skips the "user is active" check — used by a job
     that itself marks foreground (the overnight queue) so it doesn't pause on
     its own lock, while still yielding to games."""
-    # You're actively using companion (chat / deep dive) — yield the GPU to it.
+    # You're actively using agent (chat / deep dive) — yield the GPU to it.
     if not ignore_foreground:
-        from companion.foreground import active as _foreground_active
+        from agent.foreground import active as _foreground_active
 
         if _foreground_active(config):
-            return "you're using companion directly"
+            return "you're using agent directly"
     bg = config.get("background", {})
     if bg.get("pause_on_game", True):
         game = game_running()

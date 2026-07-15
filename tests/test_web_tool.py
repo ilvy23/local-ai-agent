@@ -1,7 +1,7 @@
 """Web tool: URL-unwrap, tag-strip, and the /web trigger parse. No network."""
 
-from companion.tools.web import _detag, _unwrap
-from companion.tui import _split_web_trigger
+from agent.tools.web import _detag, _unwrap
+from agent.tui import _split_web_trigger
 
 
 def test_unwrap_ddg_redirect():

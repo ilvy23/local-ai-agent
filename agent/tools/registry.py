@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from companion.jsonx import extract_json_value
+from agent.jsonx import extract_json_value
 
 
 @dataclass
@@ -81,13 +81,13 @@ def default_registry(config: dict[str, Any] | None = None) -> ToolRegistry:
     it needs the config to honour the `safety.max_timeout_s` cap. Callers that
     only want the memory-safe built-ins can omit config.
     """
-    from companion.tools.files import (
+    from agent.tools.files import (
         LIST_DIR_TOOL,
         READ_FILE_TOOL,
         SEARCH_FILES_TOOL,
         WRITE_FILE_TOOL,
     )
-    from companion.tools.system import SYSTEM_STATS_TOOL
+    from agent.tools.system import SYSTEM_STATS_TOOL
 
     registry = ToolRegistry()
     registry.register(CURRENT_TIME_TOOL)
@@ -98,7 +98,7 @@ def default_registry(config: dict[str, Any] | None = None) -> ToolRegistry:
     registry.register(SYSTEM_STATS_TOOL)
     if config is not None:
         # Imported here to avoid a circular import (shell -> registry).
-        from companion.tools.shell import make_shell_tool
+        from agent.tools.shell import make_shell_tool
 
         registry.register(make_shell_tool(config))
     return registry

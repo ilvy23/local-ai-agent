@@ -20,7 +20,7 @@ _REFRESH_SECONDS = 30
 
 
 def _path(config: dict) -> Path:
-    from companion.config import PROJECT_ROOT
+    from agent.config import PROJECT_ROOT
 
     db = Path(config["data"]["db_path"])
     if not db.is_absolute():

@@ -2,8 +2,8 @@ import logging
 
 import pytest
 
-from companion.memory.store import Store
-from companion.memory.vectors import VectorIndex
+from agent.memory.store import Store
+from agent.memory.vectors import VectorIndex
 
 
 def _vec(*values: float) -> list[float]:
@@ -13,7 +13,7 @@ def _vec(*values: float) -> list[float]:
 
 @pytest.fixture
 def store(tmp_path):
-    s = Store(tmp_path / "companion.db")
+    s = Store(tmp_path / "agent.db")
     yield s
     s.close()
 
@@ -59,7 +59,7 @@ def test_add_wrong_dimension_raises_value_error(store):
 
 
 def test_graceful_degrade_when_extension_unavailable(store, monkeypatch, caplog):
-    import companion.memory.vectors as vectors_module
+    import agent.memory.vectors as vectors_module
 
     def _boom(conn):
         raise RuntimeError("no extension here")

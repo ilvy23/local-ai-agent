@@ -1,6 +1,6 @@
 """SQLite persistence for sessions, messages, facts, and audit log.
 
-One database file backs the whole app (`data/companion.db` by default).
+One database file backs the whole app (`data/agent.db` by default).
 WAL mode and 0600 permissions are set on open. A later task adds vector
 memory on top of the same DB; this module stays focused on relational
 persistence only.
@@ -109,7 +109,7 @@ def _utcnow() -> str:
 
 
 class Store:
-    """Opens (creating if needed) the companion SQLite database."""
+    """Opens (creating if needed) the agent SQLite database."""
 
     def __init__(self, db_path: Path) -> None:
         self.db_path = Path(db_path)

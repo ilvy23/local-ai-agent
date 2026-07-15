@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import companion.governor as gov
+import agent.governor as gov
 
 CONFIG = {"background": {"pause_on_game": True, "max_gpu_percent": 40}}
 

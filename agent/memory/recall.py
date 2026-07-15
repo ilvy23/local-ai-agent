@@ -12,8 +12,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from companion.memory.store import Store
-from companion.memory.vectors import VectorIndex
+from agent.memory.store import Store
+from agent.memory.vectors import VectorIndex
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ def build_context(
     mainly useful for the JSON fallback path when the model doesn't use
     Ollama's structured tool_calls.
     """
-    from companion.memory.environment import system_facts
+    from agent.memory.environment import system_facts
 
     persona = config["persona"]["style"]
     facts = [f["content"] for f in store.get_active_facts()]

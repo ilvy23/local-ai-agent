@@ -1,4 +1,4 @@
-"""Typer CLI entry point for companion."""
+"""Typer CLI entry point for agent."""
 
 from __future__ import annotations
 
@@ -10,12 +10,12 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from companion import foreground
-from companion.config import PROJECT_ROOT, load_config
-from companion.llm import OllamaClient
-from companion.memory.store import Store
-from companion.memory.vectors import VectorIndex
-from companion.tui import run_repl
+from agent import foreground
+from agent.config import PROJECT_ROOT, load_config
+from agent.llm import OllamaClient
+from agent.memory.store import Store
+from agent.memory.vectors import VectorIndex
+from agent.tui import run_repl
 
 app = typer.Typer(add_completion=False)
 memory_app = typer.Typer(add_completion=False, help="Manage stored facts about you.")
@@ -45,14 +45,14 @@ def _open_llm() -> OllamaClient:
 
 @app.command()
 def version() -> None:
-    """Print the companion version."""
-    typer.echo(f"companion {__version__}")
+    """Print the agent version."""
+    typer.echo(f"agent {__version__}")
 
 
 @app.command()
 def governor() -> None:
     """Show whether background AI work would run or pause right now."""
-    from companion.governor import game_running, gpu_utilization, pause_reason
+    from agent.governor import game_running, gpu_utilization, pause_reason
 
     console = Console()
     config = load_config()
@@ -88,7 +88,7 @@ def sessions() -> None:
         rows = store.list_sessions()
 
     if not rows:
-        console.print("No sessions yet. Start one with [bold]companion chat[/bold].")
+        console.print("No sessions yet. Start one with [bold]agent chat[/bold].")
         return
 
     table = Table("ID", "Title", "Started", "Messages")
@@ -114,7 +114,7 @@ def resume(session_id: int | None = typer.Argument(None)) -> None:
             session_id = store.get_last_session_id()
             if session_id is None:
                 console.print(
-                    "[red]There are no sessions yet.[/red] Start one with: companion chat"
+                    "[red]There are no sessions yet.[/red] Start one with: agent chat"
                 )
                 raise typer.Exit(code=1)
         else:
@@ -123,7 +123,7 @@ def resume(session_id: int | None = typer.Argument(None)) -> None:
             existing_ids = {row["id"] for row in store.list_sessions(limit=10_000)}
             if session_id not in existing_ids:
                 console.print(
-                    f"[red]No session with id {session_id}.[/red] Try: companion sessions"
+                    f"[red]No session with id {session_id}.[/red] Try: agent sessions"
                 )
                 raise typer.Exit(code=1)
 
@@ -197,7 +197,7 @@ def memory_prune(
 ) -> None:
     """Forget junk 'facts' (file paths, tool outputs, timestamps) the distiller
     wrongly captured — they pollute chat context."""
-    from companion.memory.distill import JUNK_FACT_RE
+    from agent.memory.distill import JUNK_FACT_RE
 
     console = Console()
     config = load_config()
@@ -282,20 +282,20 @@ app.add_typer(settings_app, name="settings")
 @settings_app.command("show")
 def settings_show() -> None:
     """List the editable settings and their current values."""
-    from companion.settings import current
+    from agent.settings import current
 
     console = Console()
     table = Table("Setting", "Value", "What it does")
     for name, help_, value in current():
         table.add_row(name, str(value), help_)
     console.print(table)
-    console.print("[dim]Change with: companion settings set <setting> <value>[/dim]")
+    console.print("[dim]Change with: agent settings set <setting> <value>[/dim]")
 
 
 @settings_app.command("set")
 def settings_set(name: str = typer.Argument(...), value: str = typer.Argument(...)) -> None:
     """Set a setting, e.g. `settings set chat_model dolphin3:8b`."""
-    from companion.settings import set_value
+    from agent.settings import set_value
 
     console = Console()
     try:
@@ -321,8 +321,8 @@ def reembed(
     """
     import subprocess
 
-    from companion.memory.reembed import reembed_all
-    from companion.settings import set_value
+    from agent.memory.reembed import reembed_all
+    from agent.settings import set_value
 
     console = Console()
     config = load_config()
@@ -347,7 +347,7 @@ def reembed(
     )
 
 
-WATCH_UNIT = "companion-watch.service"
+WATCH_UNIT = "agent-watch.service"
 worker_app = typer.Typer(add_completion=False, help="Control the background worker (watcher).")
 app.add_typer(worker_app, name="worker")
 
@@ -369,8 +369,8 @@ def worker_status() -> None:
     """Show whether the background worker is running and what it last did."""
     import subprocess
 
-    from companion.panel import _last_refresh
-    from companion.worker_status import read_activity
+    from agent.panel import _last_refresh
+    from agent.worker_status import read_activity
 
     console = Console()
     config = load_config()
@@ -426,7 +426,7 @@ def panel(
     as_json: bool = typer.Option(False, "--json", help="Emit one JSON snapshot and exit."),
 ) -> None:
     """Live status dashboard: machine, Ollama, governor, data. (Node/laptop screen.)"""
-    from companion.panel import run_panel
+    from agent.panel import run_panel
 
     run_panel(interval, once=once, as_json=as_json)
 
@@ -434,7 +434,7 @@ def panel(
 @app.command()
 def menu() -> None:
     """Interactive numbered menu over all commands."""
-    from companion.menu import run_menu
+    from agent.menu import run_menu
 
     run_menu()
 
@@ -442,7 +442,7 @@ def menu() -> None:
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand is None:
-        from companion.menu import run_menu
+        from agent.menu import run_menu
 
         run_menu()
 

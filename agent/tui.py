@@ -11,12 +11,12 @@ import logging
 import httpx
 from rich.console import Console
 
-from companion.memory.distill import distill_session
-from companion.memory.recall import build_context
-from companion.memory.store import Store
-from companion.memory.vectors import VectorIndex
-from companion.safety import RiskLevel, block_reason, classify_command
-from companion.tools.registry import Tool, ToolRegistry, default_registry, parse_tool_call_fallback
+from agent.memory.distill import distill_session
+from agent.memory.recall import build_context
+from agent.memory.store import Store
+from agent.memory.vectors import VectorIndex
+from agent.safety import RiskLevel, block_reason, classify_command
+from agent.tools.registry import Tool, ToolRegistry, default_registry, parse_tool_call_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +112,7 @@ def print_resume_preview(console: Console, messages: list[dict[str, str]]) -> No
     preview = messages[-RESUME_PREVIEW_MESSAGES:]
     console.print("[dim]--- resuming previous conversation ---[/dim]")
     for message in preview:
-        label = "you" if message["role"] == "user" else "companion"
+        label = "you" if message["role"] == "user" else "agent"
         console.print(f"[dim]{label}: {message['content']}[/dim]")
     console.print("[dim]--- end of history ---[/dim]")
 
@@ -356,7 +356,7 @@ def run_repl(
         vectors = VectorIndex(store)
 
     # Live web search, bound to the console so it narrates each site as it visits.
-    from companion.tools.web import make_web_tools
+    from agent.tools.web import make_web_tools
 
     for web_tool in make_web_tools(console):
         tool_registry.register(web_tool)

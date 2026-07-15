@@ -13,12 +13,12 @@ import httpx
 import pytest
 from rich.console import Console
 
-from companion.config import DEFAULT_CONFIG
-from companion.llm import OllamaClient
-from companion.memory.recall import build_context
-from companion.memory.store import Store
-from companion.memory.vectors import VectorIndex
-from companion.tui import run_repl
+from agent.config import DEFAULT_CONFIG
+from agent.llm import OllamaClient
+from agent.memory.recall import build_context
+from agent.memory.store import Store
+from agent.memory.vectors import VectorIndex
+from agent.tui import run_repl
 
 
 class _ScriptedConsole(Console):
@@ -42,7 +42,7 @@ def test_fact_recalled_in_new_session(tmp_path):
     config = {**DEFAULT_CONFIG}
     config["models"] = {**config["models"], "chat": "llama3.1:8b"}
     client = OllamaClient()
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
 
     run_repl(
         client,

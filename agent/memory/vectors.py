@@ -14,7 +14,7 @@ import sqlite3
 import struct
 from datetime import UTC, datetime
 
-from companion.memory.store import Store
+from agent.memory.store import Store
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ class VectorIndex:
             raise ValueError(
                 f"Embedding has {len(embedding)} dimensions, expected {self.DIM}. "
                 "models.embed in config.yaml changed without re-embedding — run "
-                "`companion reembed <model>` to rebuild the index at the new size."
+                "`agent reembed <model>` to rebuild the index at the new size."
             )
 
         now = datetime.now(UTC).isoformat()

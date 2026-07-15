@@ -14,7 +14,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from companion.tools.registry import Tool
+from agent.tools.registry import Tool
 
 _GB = 1024**3
 

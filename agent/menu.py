@@ -45,12 +45,12 @@ def _pick_from(console: Console, rows, prompt: str):
 
 def _about(console: Console) -> None:
     """A short, friendly 'what is this' screen — keeps the menu from feeling hollow."""
-    from companion import main
+    from agent import main
 
     body = Text()
-    body.append("companion", style=f"bold {_CYAN}")
+    body.append("agent", style=f"bold {_CYAN}")
     body.append(f"  v{main.__version__}\n", style=_DIM)
-    body.append("A fully-local AI companion. Everything runs against your own\n", style=_CYAN)
+    body.append("A fully-local AI agent. Everything runs against your own\n", style=_CYAN)
     body.append("Ollama — no account, no cloud, nothing leaves your machine.\n\n", style=_CYAN)
     for line in (
         ("remembers", "past chats + facts about you, recalled semantically"),
@@ -107,11 +107,12 @@ _MAIN = [
 ]
 
 _BANNER = r"""
- ▄▄· ▄▄▄  • ▌ ▄ ·. ▄▄▄· ▄▄▄· ▐ ▄ ▪  ▄▄▄  ▐ ▄
-▐█ ▌▪▀▄ █··██ ▐███▪▐█ ▄█▐█ ▀█•█▌▐███ ▀▄ █·•█▌▐█
-██ ▄▄▐▀▀▄ ▐█ ▌▐▌▐█·██ ▀·▄█▀▀█▐█▐▐▌▐█·▐▀▀▄ ▐█▐▐▌
-▐███▌▐█•█▌██ ██▌▐█▌▐█▄▄▌▐█▪ ▐▌██▐█▌▐█▌▐█•█▌██▐█▌
-·▀▀▀ .▀  ▀▀▀  █▪▀▀▀ ·▀▀▀  ▀  ▀ ▀▀ █▪▀▀▀.▀  ▀▀▀ █▪
+ ▄▄▄       ▄████ ▓█████ ███▄    █ ▄▄▄█████▓
+▒████▄    ██▒ ▀█▒▓█   ▀ ██ ▀█   █ ▓  ██▒ ▓▒
+▒██  ▀█▄ ▒██░▄▄▄░▒███  ▓██  ▀█ ██▒▒ ▓██░ ▒░
+░██▄▄▄▄██░▓█  ██▓▒▓█  ▄▓██▒  ▐▌██▒░ ▓██▓ ░
+ ▓█   ▓██░▒▓███▀▒░▒████▒██░   ▓██░  ▒██▒ ░
+ ▒▒   ▓▒█░░▒   ▒ ░░ ▒░ ░ ▒░   ▒ ▒   ▒ ░░
 """
 
 _PROMPTS = {
@@ -142,7 +143,7 @@ def _flat(sections) -> list:
 
 
 def _render(sections, console: Console, root: bool) -> None:
-    from companion import main
+    from agent import main
 
     rows: list = []
     if root:
@@ -162,7 +163,7 @@ def _render(sections, console: Console, root: bool) -> None:
     rows.append(Text("   [ q] exit" if root else "   [ b] back", style=_DIM))
     console.print(Panel(
         Group(*rows), border_style=_PINK,
-        title=f"[{_GREEN}]COMPANION[/] [{_DIM}]v{main.__version__}[/]",
+        title=f"[{_GREEN}]AGENT[/] [{_DIM}]v{main.__version__}[/]",
         subtitle=f"[{_DIM}]select ▸ number  ·  q to quit[/]",
     ))
 
@@ -203,7 +204,7 @@ def _run(sections, console: Console, app, root: bool) -> None:
 
 
 def run_menu() -> None:
-    from companion.main import app  # imported here to avoid a circular import
+    from agent.main import app  # imported here to avoid a circular import
 
     console = Console()
     _run(_MAIN, console, app, root=True)

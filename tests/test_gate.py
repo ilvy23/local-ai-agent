@@ -12,14 +12,14 @@ from io import StringIO
 
 from rich.console import Console
 
-from companion.memory.store import Store
-from companion.tools.registry import Tool, ToolRegistry
-from companion.tools.shell import make_shell_tool
-from companion.tui import run_repl
+from agent.memory.store import Store
+from agent.tools.registry import Tool, ToolRegistry
+from agent.tools.shell import make_shell_tool
+from agent.tui import run_repl
 
 CONFIG = {
     "models": {"chat": "mixtral:8x7b", "background": "llama3.1:8b", "embed": "nomic-embed-text"},
-    "persona": {"name": "Companion", "style": "You are Companion."},
+    "persona": {"name": "Agent", "style": "You are Agent."},
     "memory": {"recall_k": 6, "context_char_budget": 24000},
     "tools": {"max_iterations": 8},
     "safety": {"blocked_patterns": [], "safe_commands": [], "max_timeout_s": 300},

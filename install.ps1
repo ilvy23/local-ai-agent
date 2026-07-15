@@ -1,4 +1,4 @@
-# companion installer — Windows (PowerShell).
+# agent installer — Windows (PowerShell).
 #
 # Idempotent. Installs uv (which fetches the right Python), syncs dependencies,
 # ensures Ollama is installed and running, and pulls the default models.
@@ -59,6 +59,6 @@ foreach ($m in @("dolphin3:8b", "bge-m3")) {
 }
 
 Write-Host ""
-Say "done!  start companion with:"
-Write-Host "    uv run companion menu     # interactive menu"
-Write-Host "    uv run companion chat     # jump into a chat"
+Say "done!  start agent with:"
+Write-Host "    uv run agent menu     # interactive menu"
+Write-Host "    uv run agent chat     # jump into a chat"

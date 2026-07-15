@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import companion.settings as s
+import agent.settings as s
 
 
 def test_current_lists_editable(monkeypatch):

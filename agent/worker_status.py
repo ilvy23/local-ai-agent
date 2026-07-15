@@ -1,7 +1,7 @@
 """Live 'what the worker is doing right now' marker.
 
 The watcher writes a one-line activity (e.g. "summarizing a chat") to a small
-JSON file in the data dir as it moves item to item; `companion worker status`
+JSON file in the data dir as it moves item to item; `agent worker status`
 reads it back so you can see the current task, not just the last pass. Best-
 effort — a failed write never disrupts the actual work.
 """
@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 def _activity_path(config: dict) -> Path:
-    from companion.config import PROJECT_ROOT
+    from agent.config import PROJECT_ROOT
 
     db = Path(config["data"]["db_path"])
     if not db.is_absolute():

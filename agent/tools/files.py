@@ -13,8 +13,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from companion.config import DEFAULT_DATA_DIR
-from companion.tools.registry import Tool
+from agent.config import DEFAULT_DATA_DIR
+from agent.tools.registry import Tool
 
 READ_MAX_CHARS = 20000
 LIST_CAP = 500

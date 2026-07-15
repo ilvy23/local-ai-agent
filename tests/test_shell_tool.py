@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from companion.tools.shell import TRUNCATE_MARKER, make_shell_tool, run_command
+from agent.tools.shell import TRUNCATE_MARKER, make_shell_tool, run_command
 
 
 def test_echo_round_trip():

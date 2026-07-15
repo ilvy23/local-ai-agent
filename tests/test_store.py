@@ -4,11 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from companion.memory.store import Store
+from agent.memory.store import Store
 
 
 def test_creates_db_file_with_secure_permissions(tmp_path: Path) -> None:
-    db_path = tmp_path / "companion.db"
+    db_path = tmp_path / "agent.db"
     assert not db_path.exists()
 
     Store(db_path)
@@ -19,7 +19,7 @@ def test_creates_db_file_with_secure_permissions(tmp_path: Path) -> None:
 
 
 def test_sets_busy_timeout_for_concurrent_access(tmp_path: Path) -> None:
-    db_path = tmp_path / "companion.db"
+    db_path = tmp_path / "agent.db"
     store = Store(db_path)
 
     timeout_ms = store._conn.execute("PRAGMA busy_timeout").fetchone()[0]
@@ -29,7 +29,7 @@ def test_sets_busy_timeout_for_concurrent_access(tmp_path: Path) -> None:
 
 
 def test_enables_wal_mode(tmp_path: Path) -> None:
-    db_path = tmp_path / "companion.db"
+    db_path = tmp_path / "agent.db"
     store = Store(db_path)
 
     conn = sqlite3.connect(db_path)
@@ -41,7 +41,7 @@ def test_enables_wal_mode(tmp_path: Path) -> None:
 
 
 def test_creates_expected_tables(tmp_path: Path) -> None:
-    db_path = tmp_path / "companion.db"
+    db_path = tmp_path / "agent.db"
     Store(db_path)
 
     conn = sqlite3.connect(db_path)
@@ -55,19 +55,19 @@ def test_creates_expected_tables(tmp_path: Path) -> None:
 
 
 def test_sets_schema_version(tmp_path: Path) -> None:
-    db_path = tmp_path / "companion.db"
+    db_path = tmp_path / "agent.db"
     store = Store(db_path)
 
-    from companion.memory.store import SCHEMA_VERSION
+    from agent.memory.store import SCHEMA_VERSION
 
     assert store.schema_version() == SCHEMA_VERSION
 
 
 def test_reopening_existing_db_does_not_fail(tmp_path: Path) -> None:
-    db_path = tmp_path / "companion.db"
+    db_path = tmp_path / "agent.db"
     Store(db_path).close()
 
-    from companion.memory.store import SCHEMA_VERSION
+    from agent.memory.store import SCHEMA_VERSION
 
     store = Store(db_path)
     assert store.schema_version() == SCHEMA_VERSION
@@ -75,7 +75,7 @@ def test_reopening_existing_db_does_not_fail(tmp_path: Path) -> None:
 
 
 def test_migrate_does_not_rerun_already_applied_steps(tmp_path: Path, monkeypatch) -> None:
-    from companion.memory import store as store_module
+    from agent.memory import store as store_module
 
     calls: list[int] = []
     original_steps = store_module._MIGRATIONS
@@ -85,7 +85,7 @@ def test_migrate_does_not_rerun_already_applied_steps(tmp_path: Path, monkeypatc
 
     monkeypatch.setattr(store_module, "_MIGRATIONS", [(1, _tracking_step)])
 
-    db_path = tmp_path / "companion.db"
+    db_path = tmp_path / "agent.db"
     Store(db_path).close()
     assert calls == [1]
 
@@ -96,7 +96,7 @@ def test_migrate_does_not_rerun_already_applied_steps(tmp_path: Path, monkeypatc
 
 
 def test_context_manager_closes_connection_on_exit(tmp_path: Path) -> None:
-    db_path = tmp_path / "companion.db"
+    db_path = tmp_path / "agent.db"
 
     with Store(db_path) as store:
         store.create_session()
@@ -106,14 +106,14 @@ def test_context_manager_closes_connection_on_exit(tmp_path: Path) -> None:
 
 
 def test_migrations_versions_are_strictly_increasing() -> None:
-    from companion.memory.store import _MIGRATIONS
+    from agent.memory.store import _MIGRATIONS
 
     versions = [v for v, _ in _MIGRATIONS]
     assert versions == sorted(set(versions))
 
 
 def test_create_session_returns_id_and_sets_timestamps(tmp_path: Path) -> None:
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
 
     session_id = store.create_session()
 
@@ -125,7 +125,7 @@ def test_create_session_returns_id_and_sets_timestamps(tmp_path: Path) -> None:
 
 
 def test_create_session_with_title(tmp_path: Path) -> None:
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
 
     session_id = store.create_session(title="Hello world")
 
@@ -135,7 +135,7 @@ def test_create_session_with_title(tmp_path: Path) -> None:
 
 
 def test_add_message_returns_row_id(tmp_path: Path) -> None:
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     session_id = store.create_session()
 
     first = store.add_message(session_id, "user", "hi")
@@ -146,7 +146,7 @@ def test_add_message_returns_row_id(tmp_path: Path) -> None:
 
 
 def test_memory_items_table_exists(tmp_path: Path) -> None:
-    db_path = tmp_path / "companion.db"
+    db_path = tmp_path / "agent.db"
     Store(db_path).close()
     conn = sqlite3.connect(db_path)
     tables = {
@@ -158,7 +158,7 @@ def test_memory_items_table_exists(tmp_path: Path) -> None:
 
 
 def test_facts_round_trip_add_list_deactivate(tmp_path: Path) -> None:
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
 
     fact_id = store.add_fact("dog is named Rex", source_session_id=None)
     assert isinstance(fact_id, int)
@@ -172,7 +172,7 @@ def test_facts_round_trip_add_list_deactivate(tmp_path: Path) -> None:
 
 
 def test_get_active_facts_excludes_inactive(tmp_path: Path) -> None:
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     keep = store.add_fact("likes tea", source_session_id=None)
     drop = store.add_fact("likes coffee", source_session_id=None)
     store.deactivate_fact(drop)
@@ -183,7 +183,7 @@ def test_get_active_facts_excludes_inactive(tmp_path: Path) -> None:
 
 
 def test_add_message_and_get_messages_round_trip(tmp_path: Path) -> None:
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     session_id = store.create_session()
 
     store.add_message(session_id, "user", "hi there")
@@ -197,7 +197,7 @@ def test_add_message_and_get_messages_round_trip(tmp_path: Path) -> None:
 
 
 def test_list_sessions_reports_message_count(tmp_path: Path) -> None:
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     session_id = store.create_session(title="Chat 1")
     store.add_message(session_id, "user", "hi")
     store.add_message(session_id, "assistant", "hello")
@@ -213,7 +213,7 @@ def test_list_sessions_reports_message_count(tmp_path: Path) -> None:
 
 
 def test_list_sessions_orders_most_recent_first(tmp_path: Path) -> None:
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     first_id = store.create_session(title="First")
     second_id = store.create_session(title="Second")
 
@@ -223,7 +223,7 @@ def test_list_sessions_orders_most_recent_first(tmp_path: Path) -> None:
 
 
 def test_list_sessions_respects_limit(tmp_path: Path) -> None:
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     for i in range(5):
         store.create_session(title=f"Chat {i}")
 
@@ -233,7 +233,7 @@ def test_list_sessions_respects_limit(tmp_path: Path) -> None:
 
 
 def test_get_last_session_id_returns_most_recent(tmp_path: Path) -> None:
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     store.create_session(title="First")
     second_id = store.create_session(title="Second")
 
@@ -241,13 +241,13 @@ def test_get_last_session_id_returns_most_recent(tmp_path: Path) -> None:
 
 
 def test_get_last_session_id_returns_none_when_no_sessions(tmp_path: Path) -> None:
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
 
     assert store.get_last_session_id() is None
 
 
 def test_touch_session_updates_last_active_at(tmp_path: Path) -> None:
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     session_id = store.create_session()
 
     conn = sqlite3.connect(store.db_path)
@@ -268,7 +268,7 @@ def test_touch_session_updates_last_active_at(tmp_path: Path) -> None:
 
 
 def test_set_session_title_updates_title(tmp_path: Path) -> None:
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     session_id = store.create_session()
 
     store.set_session_title(session_id, "New title")
@@ -278,7 +278,7 @@ def test_set_session_title_updates_title(tmp_path: Path) -> None:
 
 
 def test_add_audit_log_round_trip(tmp_path: Path) -> None:
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
 
     row_id = store.add_audit_log(
         kind="tool", detail='{"name": "current_time", "arguments": {}}', approved=1, result="ok"
@@ -295,7 +295,7 @@ def test_add_audit_log_round_trip(tmp_path: Path) -> None:
 
 
 def test_get_audit_log_returns_recent_first_with_filter(tmp_path: Path) -> None:
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     store.add_audit_log(kind="shell", detail="ls", approved=1, result="ok")
     store.add_audit_log(kind="tool", detail="read", approved=1, result="read 5 chars")
     store.add_audit_log(kind="shell", detail="pwd", approved=1, result="ok")
@@ -313,7 +313,7 @@ def test_get_audit_log_returns_recent_first_with_filter(tmp_path: Path) -> None:
 
 
 def test_messages_persist_across_reopening_store(tmp_path: Path) -> None:
-    db_path = tmp_path / "companion.db"
+    db_path = tmp_path / "agent.db"
     store = Store(db_path)
     session_id = store.create_session(title="Persisted chat")
     store.add_message(session_id, "user", "hi there")
@@ -330,15 +330,15 @@ def test_messages_persist_across_reopening_store(tmp_path: Path) -> None:
 
 
 def test_schema_version_is_current(tmp_path: Path) -> None:
-    from companion.memory.store import SCHEMA_VERSION
+    from agent.memory.store import SCHEMA_VERSION
 
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     assert store.schema_version() == SCHEMA_VERSION == 3
     store.close()
 
 
 def test_v3_creates_app_state_table(tmp_path: Path) -> None:
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     tables = {
         row[0]
         for row in store.conn.execute(
@@ -354,7 +354,7 @@ def test_v3_creates_app_state_table(tmp_path: Path) -> None:
 
 
 def test_migrations_do_not_disturb_core_tables(tmp_path: Path) -> None:
-    db_path = tmp_path / "companion.db"
+    db_path = tmp_path / "agent.db"
     store = Store(db_path)
     session_id = store.create_session(title="still here")
     store.add_message(session_id, "user", "hi")

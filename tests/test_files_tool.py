@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from companion.tools.files import list_dir, read_file, search_files, write_file
+from agent.tools.files import list_dir, read_file, search_files, write_file
 
 
 def test_read_file_round_trip(tmp_path: Path):
@@ -101,16 +101,16 @@ def test_write_file_append(tmp_path: Path):
 def test_write_file_refuses_data_dir(tmp_path: Path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    monkeypatch.setattr("companion.tools.files.DEFAULT_DATA_DIR", data_dir)
-    out = write_file(str(data_dir / "companion.db"), "malicious")
+    monkeypatch.setattr("agent.tools.files.DEFAULT_DATA_DIR", data_dir)
+    out = write_file(str(data_dir / "agent.db"), "malicious")
     assert "Error" in out or "refus" in out.lower()
-    assert not (data_dir / "companion.db").exists()
+    assert not (data_dir / "agent.db").exists()
 
 
 def test_write_file_refuses_data_dir_via_traversal(tmp_path: Path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    monkeypatch.setattr("companion.tools.files.DEFAULT_DATA_DIR", data_dir)
+    monkeypatch.setattr("agent.tools.files.DEFAULT_DATA_DIR", data_dir)
     sneaky = tmp_path / "sub" / ".." / "data" / "x.txt"
     out = write_file(str(sneaky), "malicious")
     assert "Error" in out or "refus" in out.lower()

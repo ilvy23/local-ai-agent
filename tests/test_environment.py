@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from companion.memory.environment import system_facts
-from companion.memory.recall import _build_system_prompt
+from agent.memory.environment import system_facts
+from agent.memory.recall import _build_system_prompt
 
 
 def test_system_facts_includes_os_and_home():
@@ -9,7 +9,7 @@ def test_system_facts_includes_os_and_home():
     joined = "\n".join(lines)
     assert any(line.startswith("OS:") for line in lines)
     assert any("Home directory:" in line for line in lines)
-    assert "Companion project directory:" in joined
+    assert "Agent project directory:" in joined
 
 
 def test_environment_block_in_system_prompt():

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# companion installer — Linux (Ubuntu/Debian, Arch, Fedora, openSUSE).
+# agent installer — Linux (Ubuntu/Debian, Arch, Fedora, openSUSE).
 #
 # Idempotent: re-running is safe. It installs uv (which fetches the right
 # Python for you), syncs dependencies, ensures Ollama is installed and running,
@@ -60,6 +60,6 @@ for m in dolphin3:8b bge-m3; do
 done
 
 echo
-say "done!  start companion with:"
-echo "    uv run companion menu     # interactive menu"
-echo "    uv run companion chat     # jump into a chat"
+say "done!  start agent with:"
+echo "    uv run agent menu     # interactive menu"
+echo "    uv run agent chat     # jump into a chat"

@@ -3,15 +3,15 @@ models:
   background: dolphin3:8b
   embed: bge-m3
 persona:
-  name: Companion
-  style: "You are Companion, a warm and friendly companion who chats like a supportive\
+  name: Agent
+  style: "You are Agent, a warm and friendly agent who chats like a supportive\
     \ friend: casual, honest, and curious. Give thorough, detailed answers \u2014\
     \ explain your reasoning, add useful context and examples, and cover the relevant\
     \ angles rather than one-liners. Structure longer answers with short paragraphs\
     \ or bullet points when it helps. Stay natural, not padded: be detailed because\
     \ the content earns it, and match a quick reply to a quick question."
 data:
-  db_path: data/companion.db
+  db_path: data/agent.db
 memory:
   recall_k: 6
   context_char_budget: 24000

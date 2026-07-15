@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from companion.memory.reembed import reembed_all
-from companion.memory.store import Store
-from companion.memory.vectors import VectorIndex
+from agent.memory.reembed import reembed_all
+from agent.memory.store import Store
+from agent.memory.vectors import VectorIndex
 
 
 class FakeLLM:
@@ -19,7 +19,7 @@ class FakeLLM:
 
 @pytest.fixture
 def store(tmp_path):
-    s = Store(tmp_path / "companion.db")
+    s = Store(tmp_path / "agent.db")
     yield s
     s.close()
 

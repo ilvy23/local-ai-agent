@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import companion.menu as m
-from companion.menu import _fill
+import agent.menu as m
+from agent.menu import _fill
 
 
 class StubConsole:

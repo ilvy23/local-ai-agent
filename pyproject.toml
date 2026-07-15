@@ -1,7 +1,7 @@
 [project]
-name = "companion"
+name = "agent"
 version = "0.1.0"
-description = "Fully-local AI companion agent"
+description = "Fully-local AI agent"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-companion = "companion.main:app"
+agent = "agent.main:app"
 
 [build-system]
 requires = ["uv_build>=0.11.26,<0.12.0"]

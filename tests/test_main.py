@@ -3,8 +3,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from companion.main import app
-from companion.memory.store import Store
+from agent.main import app
+from agent.memory.store import Store
 
 runner = CliRunner()
 
@@ -14,9 +14,9 @@ def _isolated_db(monkeypatch, tmp_path):
     """Point every test at a throwaway config + db so nothing touches the repo's data/."""
     config_path = tmp_path / "config.yaml"
     data_dir = tmp_path / "data"
-    monkeypatch.setattr("companion.config.DEFAULT_CONFIG_PATH", config_path)
-    monkeypatch.setattr("companion.config.DEFAULT_DATA_DIR", data_dir)
-    monkeypatch.setattr("companion.main.PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr("agent.config.DEFAULT_CONFIG_PATH", config_path)
+    monkeypatch.setattr("agent.config.DEFAULT_DATA_DIR", data_dir)
+    monkeypatch.setattr("agent.main.PROJECT_ROOT", tmp_path)
     return tmp_path
 
 
@@ -28,7 +28,7 @@ def test_sessions_lists_no_sessions_message_when_empty():
 
 
 def test_sessions_lists_existing_sessions(_isolated_db):
-    db_path = _isolated_db / "data" / "companion.db"
+    db_path = _isolated_db / "data" / "agent.db"
     store = Store(db_path)
     store.create_session(title="Hello there")
     store.add_message(store.get_last_session_id(), "user", "hi")
@@ -48,7 +48,7 @@ def test_resume_with_no_sessions_shows_friendly_error(_isolated_db):
 
 
 def test_resume_with_unknown_session_id_shows_friendly_error(_isolated_db):
-    db_path = _isolated_db / "data" / "companion.db"
+    db_path = _isolated_db / "data" / "agent.db"
     Store(db_path).close()
 
     result = runner.invoke(app, ["resume", "999"])
@@ -73,7 +73,7 @@ def test_memory_add_then_list(_isolated_db):
 
 
 def test_memory_forget_round_trip(_isolated_db):
-    db_path = _isolated_db / "data" / "companion.db"
+    db_path = _isolated_db / "data" / "agent.db"
     store = Store(db_path)
     fact_id = store.add_fact("temporary fact", source_session_id=None)
     store.close()
@@ -92,7 +92,7 @@ def test_audit_empty_state(_isolated_db):
 
 
 def test_audit_renders_rows(_isolated_db):
-    db_path = _isolated_db / "data" / "companion.db"
+    db_path = _isolated_db / "data" / "agent.db"
     store = Store(db_path)
     store.add_audit_log(kind="shell", detail="ls -la", approved=1, result="exit 0")
     store.add_audit_log(kind="tool", detail="read_file", approved=1, result="read 12 chars")
@@ -105,7 +105,7 @@ def test_audit_renders_rows(_isolated_db):
 
 
 def test_audit_kind_filter(_isolated_db):
-    db_path = _isolated_db / "data" / "companion.db"
+    db_path = _isolated_db / "data" / "agent.db"
     store = Store(db_path)
     store.add_audit_log(kind="shell", detail="pwd", approved=1, result="ok")
     store.add_audit_log(kind="tool", detail="list_dir", approved=1, result="ok")
@@ -118,7 +118,7 @@ def test_audit_kind_filter(_isolated_db):
 
 
 def test_audit_limit_respected(_isolated_db):
-    db_path = _isolated_db / "data" / "companion.db"
+    db_path = _isolated_db / "data" / "agent.db"
     store = Store(db_path)
     for i in range(5):
         store.add_audit_log(kind="shell", detail=f"cmd{i}", approved=1, result="ok")
@@ -133,7 +133,7 @@ def test_audit_limit_respected(_isolated_db):
 
 
 def test_memory_search_like_fallback(_isolated_db):
-    db_path = _isolated_db / "data" / "companion.db"
+    db_path = _isolated_db / "data" / "agent.db"
     store = Store(db_path)
     store.add_fact("enjoys hiking in the mountains", source_session_id=None)
     store.add_fact("drinks black coffee", source_session_id=None)

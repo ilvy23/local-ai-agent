@@ -13,9 +13,9 @@ import logging
 import re
 from typing import Any
 
-from companion.jsonx import extract_json_value
-from companion.memory.store import Store
-from companion.memory.vectors import VectorIndex
+from agent.jsonx import extract_json_value
+from agent.memory.store import Store
+from agent.memory.vectors import VectorIndex
 
 logger = logging.getLogger(__name__)
 

@@ -1,9 +1,9 @@
-from companion.memory.recall import build_context
-from companion.memory.store import Store
-from companion.memory.vectors import VectorIndex
+from agent.memory.recall import build_context
+from agent.memory.store import Store
+from agent.memory.vectors import VectorIndex
 
 CONFIG = {
-    "persona": {"style": "You are Companion."},
+    "persona": {"style": "You are Agent."},
     "models": {"embed": "nomic-embed-text"},
     "memory": {"recall_k": 6, "context_char_budget": 24000},
 }
@@ -24,7 +24,7 @@ class FakeLLM:
 
 
 def _make(tmp_path):
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     return store, VectorIndex(store)
 
 
@@ -38,7 +38,7 @@ def test_system_prompt_includes_persona_and_facts(tmp_path):
 
     system = messages[0]
     assert system["role"] == "system"
-    assert "You are Companion." in system["content"]
+    assert "You are Agent." in system["content"]
     assert "Rex" in system["content"]
     assert "Berlin" in system["content"]
     assert messages[-1] == {"role": "user", "content": "hi"}

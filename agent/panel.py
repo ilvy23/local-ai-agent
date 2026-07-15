@@ -74,7 +74,7 @@ def _ollama_models() -> list[str]:
     it also works when pointed at a remote Ollama server."""
     import httpx
 
-    from companion.llm import DEFAULT_BASE_URL
+    from agent.llm import DEFAULT_BASE_URL
 
     try:
         data = httpx.get(f"{DEFAULT_BASE_URL}/api/ps", timeout=3).json()
@@ -92,7 +92,7 @@ def _ollama_models() -> list[str]:
 
 def _disk(config) -> tuple[float, float]:
     """(used_gb, total_gb) for the filesystem holding the DB."""
-    from companion.config import PROJECT_ROOT
+    from agent.config import PROJECT_ROOT
 
     db = Path(config["data"]["db_path"])
     if not db.is_absolute():
@@ -136,7 +136,7 @@ def _bar(pct: float, width: int = 20) -> Text:
 
 def _data_stats(config) -> dict:
     """Counts straight from the DB. Empty dict if it can't be opened."""
-    from companion.main import _open_store
+    from agent.main import _open_store
 
     try:
         with _open_store(config) as store:
@@ -152,7 +152,7 @@ def _data_stats(config) -> dict:
 
 
 def _frame(config, cpu_pct: float) -> Panel:
-    from companion.governor import game_running, gpu_utilization, pause_reason
+    from agent.governor import game_running, gpu_utilization, pause_reason
 
     used, total = _mem()
     gpu = gpu_utilization()
@@ -190,7 +190,7 @@ def _frame(config, cpu_pct: float) -> Panel:
     else:
         gov.append("▶ clear — background work runs\n", style=_GREEN)
     gov.append(f"game: {game or 'none'}\n", style=_DIM)
-    from companion.worker_status import read_activity
+    from agent.worker_status import read_activity
 
     act = read_activity(config)
     if act and act[1] < 120:  # only if recent enough to be "current"
@@ -223,7 +223,7 @@ def _frame(config, cpu_pct: float) -> Panel:
     return Panel(
         Group(body),
         border_style=_PINK,
-        title=f"[{_GREEN}]COMPANION · {host}[/]",
+        title=f"[{_GREEN}]AGENT · {host}[/]",
         subtitle=f"[{_DIM}]{clock} · up {_uptime()} · Ctrl-C to exit[/]",
     )
 
@@ -233,7 +233,7 @@ def snapshot(config, cpu_pct: float) -> dict:
     cron alerts, or a remote e-ink/OLED status display."""
     import platform
 
-    from companion.governor import game_running, gpu_utilization, pause_reason
+    from agent.governor import game_running, gpu_utilization, pause_reason
 
     used, total = _mem()
     disk_used, disk_total = _disk(config)
@@ -255,7 +255,7 @@ def snapshot(config, cpu_pct: float) -> dict:
 
 
 def run_panel(refresh_s: float = 2.0, once: bool = False, as_json: bool = False) -> None:
-    from companion.config import load_config
+    from agent.config import load_config
 
     config = load_config()
     prev = _cpu_times()

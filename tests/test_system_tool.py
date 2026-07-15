@@ -1,4 +1,4 @@
-from companion.tools.system import system_stats
+from agent.tools.system import system_stats
 
 
 def test_system_stats_returns_readable_string():

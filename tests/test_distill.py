@@ -1,6 +1,6 @@
-from companion.memory.distill import _extract_json_array, distill_session
-from companion.memory.store import Store
-from companion.memory.vectors import VectorIndex
+from agent.memory.distill import _extract_json_array, distill_session
+from agent.memory.store import Store
+from agent.memory.vectors import VectorIndex
 
 CONFIG = {
     "models": {"background": "llama3.1:8b", "embed": "nomic-embed-text"},
@@ -55,7 +55,7 @@ def _session_with_user_messages(store, count):
 
 
 def test_skips_when_fewer_than_two_user_messages(tmp_path):
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     vectors = VectorIndex(store)
     session_id = _session_with_user_messages(store, 1)
 
@@ -66,7 +66,7 @@ def test_skips_when_fewer_than_two_user_messages(tmp_path):
 
 
 def test_stores_new_facts_and_embeds_them(tmp_path):
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     vectors = VectorIndex(store)
     session_id = _session_with_user_messages(store, 2)
     llm = FakeLLM(
@@ -85,7 +85,7 @@ def test_stores_new_facts_and_embeds_them(tmp_path):
 
 
 def test_dedupes_exact_existing_fact(tmp_path):
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     vectors = VectorIndex(store)
     store.add_fact("dog named Rex", source_session_id=None)
     session_id = _session_with_user_messages(store, 2)
@@ -97,7 +97,7 @@ def test_dedupes_exact_existing_fact(tmp_path):
 
 
 def test_garbage_reply_skips_without_error(tmp_path):
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     vectors = VectorIndex(store)
     session_id = _session_with_user_messages(store, 2)
 
@@ -108,7 +108,7 @@ def test_garbage_reply_skips_without_error(tmp_path):
 
 
 def test_dedupes_semantically_similar_fact(tmp_path):
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     vectors = VectorIndex(store)
     # existing fact embeds to nearly the same vector as the candidate
     similar = _vec(1.0, 0.01)

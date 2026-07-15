@@ -1,7 +1,7 @@
 """The shell tool: run a command on the user's machine, behind the safety gate.
 
 The tool itself does NOT classify or gate — that is the agent loop's job (it
-calls `companion.safety.classify_command` and enforces approval before ever
+calls `agent.safety.classify_command` and enforces approval before ever
 invoking this handler). This module only executes an already-approved command
 and formats the result for the model.
 
@@ -14,7 +14,7 @@ from __future__ import annotations
 import subprocess
 from typing import Any
 
-from companion.tools.registry import Tool
+from agent.tools.registry import Tool
 
 DEFAULT_TIMEOUT_S = 60
 DEFAULT_MAX_TIMEOUT_S = 300
@@ -32,7 +32,7 @@ def run_command(
 
     Output is truncated to OUTPUT_LIMIT chars. `timeout_s` is capped at
     `max_timeout_s`. cwd defaults to the process working directory (the
-    directory companion was launched from).
+    directory agent was launched from).
     """
     effective_timeout = min(max(1, int(timeout_s)), max_timeout_s)
 

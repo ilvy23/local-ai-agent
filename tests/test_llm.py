@@ -3,7 +3,7 @@ import json
 import httpx
 import pytest
 
-from companion.llm import OllamaClient
+from agent.llm import OllamaClient
 
 
 def _ndjson_response(request: httpx.Request) -> httpx.Response:
@@ -73,7 +73,7 @@ def test_embed_returns_one_vector_per_input():
 
 
 def test_embed_truncates_oversized_input_to_char_limit():
-    from companion.llm import EMBED_MAX_CHARS
+    from agent.llm import EMBED_MAX_CHARS
 
     captured = {}
 

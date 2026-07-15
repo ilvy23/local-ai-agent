@@ -1,8 +1,8 @@
 <div align="center">
 
-# 🜁 companion
+# 🜁 agent
 
-**A fully-local AI companion for your terminal.**
+**A fully-local AI agent for your terminal.**
 
 Runs entirely on your own machine against [Ollama](https://ollama.com) — no
 account, no cloud, no telemetry. It remembers your conversations, can use your
@@ -19,7 +19,7 @@ PC behind a safety gate, and searches the live web when you ask it to.
 
 ## Why
 
-Most AI assistants send everything you type to someone else's servers. companion
+Most AI assistants send everything you type to someone else's servers. agent
 doesn't. It's a small, hackable CLI that keeps your data in one SQLite file on
 your disk and talks only to a model running on your own hardware — with one
 exception you control: an explicit web search.
@@ -33,7 +33,7 @@ exception you control: an explicit web search.
 - 🖥️ **Uses your PC** — runs shell commands and reads/writes files through a
   risk-classified safety gate: safe commands run, risky ones ask, dangerous ones
   are blocked. Everything is logged to an audit trail.
-- 🎛️ **Interactive menu** — a friendly launcher over every command (`companion menu`).
+- 🎛️ **Interactive menu** — a friendly launcher over every command (`agent menu`).
 - 📊 **Live status panel** — machine, Ollama, and data at a glance.
 - 🎮 **Game-aware** — background work pauses while you're gaming so it never steals
   your GPU.
@@ -69,8 +69,8 @@ ollama pull dolphin3:8b bge-m3
 ## Usage
 
 ```bash
-uv run companion menu     # interactive menu — start here
-uv run companion chat     # jump straight into a chat
+uv run agent menu     # interactive menu — start here
+uv run agent chat     # jump straight into a chat
 ```
 
 Inside a chat:
@@ -86,26 +86,26 @@ searches on its own when a question needs current information.
 <summary><b>All commands</b></summary>
 
 ```
-companion chat              # start a new chat session
-companion resume [id]       # resume the most recent (or a given) session
-companion sessions          # list past sessions
-companion menu              # interactive menu over all commands
-companion memory list       # list remembered facts
-companion memory search Q   # search facts (semantic, falls back to substring)
-companion memory add TEXT   # manually add a fact
-companion memory forget ID  # forget a fact by id
-companion memory prune      # drop junk facts (paths, tool output, timestamps)
-companion audit             # view the tool/command audit log
-companion panel             # live status panel (machine, Ollama, data)
-companion settings show     # view settings
-companion reembed MODEL     # switch the embedding model + rebuild the index
+agent chat              # start a new chat session
+agent resume [id]       # resume the most recent (or a given) session
+agent sessions          # list past sessions
+agent menu              # interactive menu over all commands
+agent memory list       # list remembered facts
+agent memory search Q   # search facts (semantic, falls back to substring)
+agent memory add TEXT   # manually add a fact
+agent memory forget ID  # forget a fact by id
+agent memory prune      # drop junk facts (paths, tool output, timestamps)
+agent audit             # view the tool/command audit log
+agent panel             # live status panel (machine, Ollama, data)
+agent settings show     # view settings
+agent reembed MODEL     # switch the embedding model + rebuild the index
 ```
 </details>
 
 ## Configuration
 
 Defaults live in `config.yaml` (created on first run). Models are editable there
-or via `companion settings set`:
+or via `agent settings set`:
 
 | Setting | Default | Purpose |
 |---|---|---|
@@ -113,12 +113,12 @@ or via `companion settings set`:
 | `models.background` | `dolphin3:8b` | fact distillation |
 | `models.embed` | `bge-m3` | embeddings (multilingual, 1024-dim) |
 
-Swap the embedding model any time with `companion reembed <model>` — it rebuilds
+Swap the embedding model any time with `agent reembed <model>` — it rebuilds
 the semantic index at the new dimension.
 
 ## How it works
 
-- **One SQLite database** (`data/companion.db`) holds sessions, messages, facts,
+- **One SQLite database** (`data/agent.db`) holds sessions, messages, facts,
   the vector index (via [sqlite-vec](https://github.com/asg017/sqlite-vec)), and
   the audit log.
 - **Memory** is three layers: the full conversation log, distilled facts about

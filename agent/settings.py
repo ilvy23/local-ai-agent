@@ -11,7 +11,7 @@ from typing import Any
 
 import yaml
 
-from companion.config import DEFAULT_CONFIG_PATH, load_config
+from agent.config import DEFAULT_CONFIG_PATH, load_config
 
 # short name -> (dotted path, one-line help)
 EDITABLE: dict[str, tuple[str, str]] = {
@@ -49,7 +49,7 @@ def _coerce(value: str) -> Any:
 def set_value(name: str, value: str) -> tuple[str, Any]:
     """Set an editable setting in config.yaml. Returns (dotted_path, coerced)."""
     if name not in EDITABLE:
-        raise KeyError(f"unknown setting '{name}' (see: companion settings)")
+        raise KeyError(f"unknown setting '{name}' (see: agent settings)")
     dotted, _ = EDITABLE[name]
     coerced = _coerce(value)
     path = Path(DEFAULT_CONFIG_PATH)

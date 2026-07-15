@@ -4,14 +4,14 @@ from io import StringIO
 import httpx
 from rich.console import Console
 
-from companion.llm import OllamaClient
-from companion.memory.store import Store
-from companion.tools.registry import Tool, ToolRegistry, default_registry
-from companion.tui import ChatSession, run_repl
+from agent.llm import OllamaClient
+from agent.memory.store import Store
+from agent.tools.registry import Tool, ToolRegistry, default_registry
+from agent.tui import ChatSession, run_repl
 
 CONFIG = {
     "models": {"chat": "mixtral:8x7b", "background": "llama3.1:8b", "embed": "nomic-embed-text"},
-    "persona": {"name": "Companion", "style": "You are Companion."},
+    "persona": {"name": "Agent", "style": "You are Agent."},
     "memory": {"recall_k": 6, "context_char_budget": 24000},
     "tools": {"max_iterations": 8},
 }
@@ -67,13 +67,13 @@ class ScriptedToolClient:
 
 def test_one_turn_appends_user_and_assistant_messages_to_history():
     client = FakeClient(["Hel", "lo!"])
-    session = ChatSession(client=client, model="mixtral:8x7b", system_prompt="You are Companion.")
+    session = ChatSession(client=client, model="mixtral:8x7b", system_prompt="You are Agent.")
 
     reply = session.send("hi there")
 
     assert reply == "Hello!"
     assert session.history == [
-        {"role": "system", "content": "You are Companion."},
+        {"role": "system", "content": "You are Agent."},
         {"role": "user", "content": "hi there"},
         {"role": "assistant", "content": "Hello!"},
     ]
@@ -106,7 +106,7 @@ def test_send_streams_tokens_to_callback():
 
 
 def test_run_repl_persists_messages_to_store(tmp_path):
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     client = FakeClient(["Hello", " there!"])
     console = _ScriptedConsole(["hi there", "/quit"])
 
@@ -122,7 +122,7 @@ def test_run_repl_persists_messages_to_store(tmp_path):
 
 
 def test_run_repl_sets_session_title_from_first_message(tmp_path):
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     client = FakeClient(["ok"])
     console = _ScriptedConsole(["hello world", "/quit"])
 
@@ -135,7 +135,7 @@ def test_run_repl_sets_session_title_from_first_message(tmp_path):
 
 
 def test_run_repl_truncates_long_title_to_60_chars(tmp_path):
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     client = FakeClient(["ok"])
     long_message = "x" * 100
     console = _ScriptedConsole([long_message, "/quit"])
@@ -147,7 +147,7 @@ def test_run_repl_truncates_long_title_to_60_chars(tmp_path):
 
 
 def test_run_repl_resumes_existing_session_with_history(tmp_path):
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     session_id = store.create_session(title="Old chat")
     store.add_message(session_id, "user", "earlier question")
     store.add_message(session_id, "assistant", "earlier answer")
@@ -169,7 +169,7 @@ def test_run_repl_resumes_existing_session_with_history(tmp_path):
     # The system prompt starts with the persona and now also carries a live
     # "System environment" block, so check the prefix rather than an exact match.
     assert call[0]["role"] == "system"
-    assert call[0]["content"].startswith("You are Companion.")
+    assert call[0]["content"].startswith("You are Agent.")
     assert call[1:] == [
         {"role": "user", "content": "earlier question"},
         {"role": "assistant", "content": "earlier answer"},
@@ -201,7 +201,7 @@ def _registry_with_echo():
 
 
 def test_scripted_tool_call_executes_and_final_answer_follows(tmp_path):
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     client = ScriptedToolClient(
         [
             {
@@ -230,7 +230,7 @@ def test_model_rejecting_tools_falls_back_to_json_parsed_tool_call_end_to_end(tm
     """mixtral:8x7b-style 400 "does not support tools" -> transparent retry
     without tools=, and the plain-text JSON tool call still executes via the
     fallback parser, producing a normal final answer."""
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     requests_seen = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -281,7 +281,7 @@ def test_model_rejecting_tools_falls_back_to_json_parsed_tool_call_end_to_end(tm
 
 
 def test_tool_handler_exception_is_fed_back_and_loop_continues(tmp_path):
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
 
     def boom(**kwargs):
         raise ValueError("kaboom")
@@ -314,7 +314,7 @@ def test_tool_handler_exception_is_fed_back_and_loop_continues(tmp_path):
 
 
 def test_max_iterations_cap_tells_user_and_stops(tmp_path):
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     tool_call_message = {
         "role": "assistant",
         "content": "",
@@ -334,7 +334,7 @@ def test_max_iterations_cap_tells_user_and_stops(tmp_path):
 
 
 def test_tool_messages_not_embedded(tmp_path):
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     client = ScriptedToolClient(
         [
             {
@@ -419,7 +419,7 @@ class _StatusErrorClient:
 
 
 def test_connect_error_shows_connection_hint(tmp_path):
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     client = _ConnectErrorClient()
     console = _ScriptedConsole(["hi", "/quit"])
 
@@ -431,7 +431,7 @@ def test_connect_error_shows_connection_hint(tmp_path):
 
 
 def test_unrelated_http_status_error_is_not_reported_as_connection_error(tmp_path):
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     client = _StatusErrorClient(500, "internal server error")
     console = _ScriptedConsole(["hi", "/quit"])
 
@@ -445,7 +445,7 @@ def test_unrelated_http_status_error_is_not_reported_as_connection_error(tmp_pat
 
 
 def test_audit_log_written_for_tool_execution(tmp_path):
-    store = Store(tmp_path / "companion.db")
+    store = Store(tmp_path / "agent.db")
     client = ScriptedToolClient(
         [
             {

@@ -1,4 +1,4 @@
-from companion.jsonx import extract_json_value
+from agent.jsonx import extract_json_value
 
 
 def test_extracts_clean_json_object():

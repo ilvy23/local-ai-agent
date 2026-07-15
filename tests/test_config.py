@@ -2,7 +2,7 @@ from pathlib import Path
 
 import yaml
 
-from companion.config import DEFAULT_CONFIG, DEFAULT_CONFIG_PATH, load_config
+from agent.config import DEFAULT_CONFIG, DEFAULT_CONFIG_PATH, load_config
 
 
 def _key_paths(d: dict, prefix: str = "") -> set[str]:

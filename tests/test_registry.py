@@ -1,6 +1,6 @@
 import pytest
 
-from companion.tools.registry import Tool, ToolRegistry, default_registry, parse_tool_call_fallback
+from agent.tools.registry import Tool, ToolRegistry, default_registry, parse_tool_call_fallback
 
 
 def _make_tool(name="echo", risk="safe"):

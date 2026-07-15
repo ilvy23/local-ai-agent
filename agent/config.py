@@ -1,4 +1,4 @@
-"""Load and persist companion configuration.
+"""Load and persist agent configuration.
 
 On first run, a config.yaml with sane defaults is created next to the
 project root (or wherever the caller points it). Later tasks (SQLite
@@ -24,9 +24,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "embed": "bge-m3",           # embeddings (multilingual, 1024-dim)
     },
     "persona": {
-        "name": "Companion",
+        "name": "Agent",
         "style": (
-            "You are Companion, a warm and friendly companion who chats "
+            "You are Agent, a warm and friendly agent who chats "
             "like a supportive friend: casual, honest, and curious. "
             "Give thorough, detailed answers — explain your reasoning, add "
             "useful context and examples, and cover the relevant angles rather "
@@ -37,7 +37,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         ),
     },
     "data": {
-        "db_path": "data/companion.db",
+        "db_path": "data/agent.db",
     },
     "memory": {
         "recall_k": 6,
@@ -49,7 +49,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "safety": {
         # These lists EXTEND the built-in allow/block lists; they never shrink
         # them. Built-in safe commands and blocked patterns are hard-coded in
-        # companion.safety and cannot be removed via config.
+        # agent.safety and cannot be removed via config.
         "safe_commands": [],
         "blocked_patterns": [],
         "max_timeout_s": 300,
