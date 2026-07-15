@@ -8,8 +8,9 @@ Runs entirely on your own machine against [Ollama](https://ollama.com) — no
 account, no cloud, no telemetry. It remembers your conversations, can use your
 PC behind a safety gate, and searches the live web when you ask it to.
 
+[![CI](https://github.com/ilvy23/local-ai-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/ilvy23/local-ai-agent/actions/workflows/ci.yml)
 ![License: MIT](https://img.shields.io/badge/license-MIT-39ff14)
-![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-05d9e8)
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-05d9e8)
 ![Local-first](https://img.shields.io/badge/local--first-no%20cloud-b967ff)
 ![No telemetry](https://img.shields.io/badge/telemetry-none-ff2a6d)
 
