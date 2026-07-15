@@ -1,56 +1,89 @@
-# companion
+<div align="center">
 
-A fully-local AI companion CLI. Runs entirely against a local
-[Ollama](https://ollama.com) instance — no data leaves your machine.
+# 🜁 companion
 
-It remembers past conversations, can use your PC (shell, files, system
-stats) behind a safety gate, and searches the live web when a question
-needs current information.
+**A fully-local AI companion for your terminal.**
 
-## Prerequisites
+Runs entirely on your own machine against [Ollama](https://ollama.com) — no
+account, no cloud, no telemetry. It remembers your conversations, can use your
+PC behind a safety gate, and searches the live web when you ask it to.
 
-- [Ollama](https://ollama.com) running locally: `ollama serve`
-- Models pulled in Ollama (defaults, editable in `config.yaml`):
-  - `dolphin3:8b` — chat + background tasks (fact distillation)
-  - `bge-m3` — embeddings (multilingual, 1024-dim)
+![License: MIT](https://img.shields.io/badge/license-MIT-39ff14)
+![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-05d9e8)
+![Local-first](https://img.shields.io/badge/local--first-no%20cloud-b967ff)
+![No telemetry](https://img.shields.io/badge/telemetry-none-ff2a6d)
 
-The embedding dimension is detected from the model and stored in the DB on
-first use, so you can swap the embed model and re-index with `companion
-reembed <model>`.
+</div>
+
+---
+
+## Why
+
+Most AI assistants send everything you type to someone else's servers. companion
+doesn't. It's a small, hackable CLI that keeps your data in one SQLite file on
+your disk and talks only to a model running on your own hardware — with one
+exception you control: an explicit web search.
+
+## Features
+
+- 🧠 **Persistent memory** — every chat is saved and resumable, and durable facts
+  about you are distilled automatically and recalled semantically.
+- 🌐 **Live web search** — end any message with `/web` and it searches the
+  internet, shows each site as it visits it, and answers with cited sources.
+- 🖥️ **Uses your PC** — runs shell commands and reads/writes files through a
+  risk-classified safety gate: safe commands run, risky ones ask, dangerous ones
+  are blocked. Everything is logged to an audit trail.
+- 🎛️ **Interactive menu** — a friendly launcher over every command (`companion menu`).
+- 📊 **Live status panel** — machine, Ollama, and data at a glance.
+- 🎮 **Game-aware** — background work pauses while you're gaming so it never steals
+  your GPU.
+- 🔒 **Yours** — one local SQLite database. Delete it and it's gone.
 
 ## Install
 
-**Linux** (Ubuntu/Debian, Arch, Fedora, openSUSE):
+### Linux — Ubuntu/Debian, Arch, Fedora, openSUSE
 
-```
+```bash
 ./install.sh
 ```
 
-**Windows** (PowerShell):
+### Windows *(experimental — not yet verified on a real machine)*
 
-```
+```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
 The installer sets up [uv](https://docs.astral.sh/uv/) (which fetches the right
 Python), installs dependencies, ensures Ollama is running, and pulls the default
-models. It's idempotent — safe to re-run.
+models (~6 GB, one time). It's idempotent — safe to re-run.
 
-**Manual** (if you already have uv + Ollama):
+<details>
+<summary><b>Manual install</b> (if you already have uv + Ollama)</summary>
 
-```
+```bash
 uv sync
 ollama pull dolphin3:8b bge-m3
 ```
-
-Then run it:
-
-```
-uv run companion menu     # interactive menu
-uv run companion chat     # jump into a chat
-```
+</details>
 
 ## Usage
+
+```bash
+uv run companion menu     # interactive menu — start here
+uv run companion chat     # jump straight into a chat
+```
+
+Inside a chat:
+
+```
+you> what changed in the latest python release /web
+```
+
+The `/web` suffix forces a live web search for that message; the agent also
+searches on its own when a question needs current information.
+
+<details>
+<summary><b>All commands</b></summary>
 
 ```
 companion chat              # start a new chat session
@@ -64,33 +97,48 @@ companion memory forget ID  # forget a fact by id
 companion memory prune      # drop junk facts (paths, tool output, timestamps)
 companion audit             # view the tool/command audit log
 companion panel             # live status panel (machine, Ollama, data)
+companion settings show     # view settings
+companion reembed MODEL     # switch the embedding model + rebuild the index
 ```
+</details>
 
-### Web search
+## Configuration
 
-End any chat message with `/web` (or `/search`) to force a live web search
-for it — the agent shows each site as it visits it and answers with cited
-sources:
+Defaults live in `config.yaml` (created on first run). Models are editable there
+or via `companion settings set`:
 
+| Setting | Default | Purpose |
+|---|---|---|
+| `models.chat` | `dolphin3:8b` | interactive chat + tools |
+| `models.background` | `dolphin3:8b` | fact distillation |
+| `models.embed` | `bge-m3` | embeddings (multilingual, 1024-dim) |
+
+Swap the embedding model any time with `companion reembed <model>` — it rebuilds
+the semantic index at the new dimension.
+
+## How it works
+
+- **One SQLite database** (`data/companion.db`) holds sessions, messages, facts,
+  the vector index (via [sqlite-vec](https://github.com/asg017/sqlite-vec)), and
+  the audit log.
+- **Memory** is three layers: the full conversation log, distilled facts about
+  you, and semantic recall over both. Context for each reply = persona + relevant
+  facts + recalled memories + the current session.
+- **Tools** are gated by a risk classifier before they run; every execution is
+  audited.
+
+## Privacy
+
+Everything stays on your disk and talks only to your local Ollama instance. The
+one time data leaves your machine is a web search you explicitly trigger — and it
+shows you exactly which sites it visits.
+
+## Development
+
+```bash
+uv run pytest          # run the test suite
 ```
-you> what changed in the latest python release /web
-```
-
-The agent can also search on its own when a question needs current info.
-
-### Using your PC
-
-The agent can run shell commands and read/write files through a tool layer
-with a risk classifier: safe commands run automatically, riskier ones ask
-for confirmation, and dangerous ones are blocked. Everything it runs is
-recorded in the audit log (`companion audit`).
-
-## Data
-
-Everything is stored locally in `data/companion.db` (SQLite, WAL mode).
-Nothing is synced or sent anywhere except to your local Ollama instance —
-and to the web, only when you explicitly trigger a search.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[MIT](LICENSE).
