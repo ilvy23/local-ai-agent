@@ -16,7 +16,7 @@ PC behind a safety gate, and searches the live web when you ask it to.
 
 <br>
 
-<img src="assets/demo.gif" alt="agent doing a live /web search in the terminal" width="680">
+<img src="assets/web-demo.gif" alt="agent doing a live /web search in the terminal" width="680">
 
 <sub><i>A live <code>/web</code> search — the agent visits the sources and answers with citations.</i></sub>
 
