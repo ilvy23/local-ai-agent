@@ -16,7 +16,9 @@ PC behind a safety gate, and searches the live web when you ask it to.
 
 <br>
 
-<img src="assets/menu.svg" alt="agent interactive menu" width="620">
+<img src="assets/demo.gif" alt="agent doing a live /web search in the terminal" width="680">
+
+<sub><i>A live <code>/web</code> search — the agent visits the sources and answers with citations.</i></sub>
 
 </div>
 
@@ -77,6 +79,8 @@ ollama pull dolphin3:8b bge-m3
 uv run agent menu     # interactive menu — start here
 uv run agent chat     # jump straight into a chat
 ```
+
+<div align="center"><img src="assets/menu.svg" alt="agent interactive menu" width="600"></div>
 
 Inside a chat:
 
