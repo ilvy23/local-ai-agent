@@ -1,8 +1,9 @@
-"""Interactive nested menu — a friendly launcher over the existing commands.
+"""Interactive nested menu — a friendly launcher over the CLI.
 
 Reuses the Typer app in-process (no subprocess, no duplicated logic): each leaf
-choice is an argv the app already knows how to run. Submenus nest. Placeholders
-prompt for contact/depth/draft/effort/setting when needed. Neon cyberpunk theme.
+choice is an argv the app already knows how to run. Submenus nest; `{...}`
+placeholders prompt for a value first. Neon theme, because a local tool you live
+in should have a little character.
 """
 
 from __future__ import annotations
@@ -27,61 +28,81 @@ def call(fn):
     return ("call", fn)
 
 
-def _open():
-    """(config, store-context-manager) — lazy import to avoid a cycle."""
-    from companion.config import load_config
-    from companion.main import _open_store
-
-    config = load_config()
-    return config, _open_store(config)
-
-
 def _pick_from(console: Console, rows, prompt: str):
-    """Show a numbered list of (label, value) and return the chosen value, or a
+    """Show a numbered list of (label, value) and return the chosen value, a
     typed free-text value, or None to cancel."""
     if not rows:
         return console.input(f"  [{_PINK}]▸[/] {prompt}: ").strip() or None
     for i, (label, _v) in enumerate(rows, 1):
         console.print(f"   [{_GREEN}]{i:2}[/] [{_CYAN}]{label}[/]")
-    raw = console.input(f"  [{_PINK}]▸[/] {prompt} (number, or type a name): ").strip()
+    raw = console.input(f"  [{_PINK}]▸[/] {prompt} (number, or type): ").strip()
     if not raw:
         return None
     if raw.isdigit() and 1 <= int(raw) <= len(rows):
         return rows[int(raw) - 1][1]
-    return raw  # typed free text (resolve_contact will handle a name)
+    return raw
 
 
+def _about(console: Console) -> None:
+    """A short, friendly 'what is this' screen — keeps the menu from feeling hollow."""
+    from companion import main
+
+    body = Text()
+    body.append("companion", style=f"bold {_CYAN}")
+    body.append(f"  v{main.__version__}\n", style=_DIM)
+    body.append("A fully-local AI companion. Everything runs against your own\n", style=_CYAN)
+    body.append("Ollama — no account, no cloud, nothing leaves your machine.\n\n", style=_CYAN)
+    for line in (
+        ("remembers", "past chats + facts about you, recalled semantically"),
+        ("uses your PC", "shell, files, system stats — behind a safety gate"),
+        ("searches the web", "end a chat message with /web for live, cited answers"),
+        ("stays yours", "one local SQLite file; delete it and it's gone"),
+    ):
+        body.append(f"  ● {line[0]}", style=f"bold {_GREEN}")
+        body.append(f" — {line[1]}\n", style=_DIM)
+    body.append("\nTip: ", style=f"bold {_PINK}")
+    body.append("type /web after a question in chat to search the internet.", style=_DIM)
+    console.print(Panel(body, border_style=_PURPLE, title=f"[{_GREEN}]ABOUT[/]"))
 
 
 # --- submenus ---
-_SETTINGS = [("◢ SETTINGS", [
-    ("View all settings", cmd(["settings", "show"])),
-    ("Change a setting", cmd(["settings", "set", "{setting}", "{value}"])),
-])]
-
-# Each top-level category is its own submenu: pick its number, drill in, see all
-# of its options. Keeps the home screen to a handful of choices instead of ~40.
 _CHAT = [("◢ CHAT", [
-    ("Chat with your companion", cmd(["chat"])),
+    ("Start a new chat", cmd(["chat"])),
     ("Resume last chat", cmd(["resume"])),
     ("Past chat sessions", cmd(["sessions"])),
 ])]
 
+_MEMORY = [("◢ MEMORY", [
+    ("Facts it remembers about you", cmd(["memory", "list"])),
+    ("Search facts  ▸ query", cmd(["memory", "search", "{query}"])),
+    ("Add a fact  ▸ text", cmd(["memory", "add", "{text}"])),
+    ("Forget a fact  ▸ id", cmd(["memory", "forget", "{id}"])),
+    ("Prune junk facts (paths, tool output)", cmd(["memory", "prune"])),
+])]
+
+_SETTINGS = [("◢ SETTINGS", [
+    ("View all settings", cmd(["settings", "show"])),
+    ("Change a setting  ▸ name, value", cmd(["settings", "set", "{setting}", "{value}"])),
+    ("Re-embed memory with a new model  ▸ model", cmd(["reembed", "{model}"])),
+])]
 
 _SYSTEM = [("◢ SYSTEM", [
-    ("Live panel (this machine)", cmd(["panel"])),
+    ("Live status panel (machine + Ollama)", cmd(["panel"])),
+    ("Is background work paused? (governor)", cmd(["governor"])),
+    ("Audit trail — what the agent ran", cmd(["audit"])),
     ("Background worker · status", cmd(["worker", "status"])),
     ("Background worker · start", cmd(["worker", "start"])),
     ("Background worker · stop", cmd(["worker", "stop"])),
-    ("Memory · facts about you", cmd(["memory", "list"])),
-    ("Audit trail", cmd(["audit"])),
     ("Settings  ▸", sub(_SETTINGS)),
 ])]
 
 _MAIN = [
     ("◢ MENU  ·  pick a number", [
         ("Chat  ▸", sub(_CHAT)),
+        ("Memory  ▸", sub(_MEMORY)),
         ("System  ▸", sub(_SYSTEM)),
+        ("Settings  ▸", sub(_SETTINGS)),
+        ("About & help", call(_about)),
     ]),
 ]
 
@@ -94,21 +115,18 @@ _BANNER = r"""
 """
 
 _PROMPTS = {
-    "{draft}": "draft message",
     "{setting}": "setting name",
     "{value}": "new value",
     "{query}": "search for",
-    "{note}": "your plans/availability today",
+    "{text}": "fact to remember",
+    "{id}": "fact id",
+    "{model}": "embedding model (e.g. bge-m3)",
 }
 
 
 def _fill(template: list[str], console: Console) -> list[str] | None:
     argv: list[str] = []
-    skip_next = False
     for tok in template:
-        if skip_next:
-            skip_next = False
-            continue
         if tok in _PROMPTS:
             val = console.input(f"  [{_PINK}]▸[/] {_PROMPTS[tok]}: ").strip()
             if not val:
@@ -124,6 +142,8 @@ def _flat(sections) -> list:
 
 
 def _render(sections, console: Console, root: bool) -> None:
+    from companion import main
+
     rows: list = []
     if root:
         rows.append(Align.center(Text(_BANNER.strip("\n"), style=f"bold {_CYAN}")))
@@ -142,8 +162,8 @@ def _render(sections, console: Console, root: bool) -> None:
     rows.append(Text("   [ q] exit" if root else "   [ b] back", style=_DIM))
     console.print(Panel(
         Group(*rows), border_style=_PINK,
-        title=f"[{_GREEN}]COMPANION[/] [{_DIM}]v1[/]",
-        subtitle=f"[{_DIM}]select ▸ number[/]",
+        title=f"[{_GREEN}]COMPANION[/] [{_DIM}]v{main.__version__}[/]",
+        subtitle=f"[{_DIM}]select ▸ number  ·  q to quit[/]",
     ))
 
 
@@ -153,7 +173,7 @@ def _run(sections, console: Console, app, root: bool) -> None:
         _render(sections, console, root)
         choice = console.input(f"\n [{_GREEN}]╺╸[/] ").strip().lower()
         if root and choice in ("q", "quit", "exit", "0", ""):
-            console.print(f"[{_PURPLE}]// disconnected //[/]")
+            console.print(f"[{_PURPLE}]// see you around //[/]")
             return
         if not root and choice in ("b", "back", "0", ""):
             return
@@ -165,7 +185,6 @@ def _run(sections, console: Console, app, root: bool) -> None:
             _run(payload, console, app, root=False)
             continue
         if kind == "call":
-            console.print(f"[{_DIM}]── running ──[/]")
             try:
                 payload(console)
             except Exception as exc:  # noqa: BLE001

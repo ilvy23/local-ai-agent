@@ -20,8 +20,34 @@ reembed <model>`.
 
 ## Install
 
+**Linux** (Ubuntu/Debian, Arch, Fedora, openSUSE):
+
+```
+./install.sh
+```
+
+**Windows** (PowerShell):
+
+```
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+The installer sets up [uv](https://docs.astral.sh/uv/) (which fetches the right
+Python), installs dependencies, ensures Ollama is running, and pulls the default
+models. It's idempotent — safe to re-run.
+
+**Manual** (if you already have uv + Ollama):
+
 ```
 uv sync
+ollama pull dolphin3:8b bge-m3
+```
+
+Then run it:
+
+```
+uv run companion menu     # interactive menu
+uv run companion chat     # jump into a chat
 ```
 
 ## Usage
