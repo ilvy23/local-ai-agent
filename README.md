@@ -13,6 +13,10 @@ PC behind a safety gate, and searches the live web when you ask it to.
 ![Local-first](https://img.shields.io/badge/local--first-no%20cloud-b967ff)
 ![No telemetry](https://img.shields.io/badge/telemetry-none-ff2a6d)
 
+<br>
+
+<img src="assets/menu.svg" alt="agent interactive menu" width="620">
+
 </div>
 
 ---
