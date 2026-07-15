@@ -1,0 +1,28 @@
+models:
+  chat: dolphin3:8b
+  background: dolphin3:8b
+  embed: bge-m3
+persona:
+  name: Companion
+  style: "You are Companion, a warm and friendly companion who chats like a supportive\
+    \ friend: casual, honest, and curious. Give thorough, detailed answers \u2014\
+    \ explain your reasoning, add useful context and examples, and cover the relevant\
+    \ angles rather than one-liners. Structure longer answers with short paragraphs\
+    \ or bullet points when it helps. Stay natural, not padded: be detailed because\
+    \ the content earns it, and match a quick reply to a quick question."
+data:
+  db_path: data/companion.db
+memory:
+  recall_k: 6
+  context_char_budget: 24000
+tools:
+  max_iterations: 8
+safety:
+  safe_commands: []
+  blocked_patterns: []
+  max_timeout_s: 300
+background:
+  pause_on_game: true
+  max_gpu_percent: 40
+  max_cpu_percent: 50
+  max_ram_gb: 16
