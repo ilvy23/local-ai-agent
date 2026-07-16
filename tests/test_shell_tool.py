@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import os
+
 from agent.tools.shell import TRUNCATE_MARKER, make_shell_tool, run_command
 
 
 def test_echo_round_trip():
     result = run_command("echo hello world")
     assert "hello world" in result
-    assert "exit code: 0" in result.lower()
+    assert "exit code 0" in result.lower()
+    # The command and its directory are echoed: bare output is unattributable
+    # across several calls, and the cwd is otherwise invisible to the model.
+    assert result.startswith("$ echo hello world")
+    assert os.getcwd() in result
 
 
 def test_stderr_is_merged():
@@ -18,7 +24,18 @@ def test_stderr_is_merged():
 
 def test_nonzero_exit_code_reported():
     result = run_command("exit 3")
-    assert "exit code: 3" in result.lower()
+    assert "exit code 3" in result.lower()
+
+
+def test_result_names_the_directory_it_ran_in(tmp_path):
+    result = run_command("pwd", cwd=str(tmp_path))
+    assert f"(in {tmp_path}" in result
+
+
+def test_timeout_message_names_the_command():
+    result = run_command("sleep 5", timeout_s=1)
+    assert result.startswith("$ sleep 5")
+    assert "timed out" in result.lower()
 
 
 def test_output_truncation():

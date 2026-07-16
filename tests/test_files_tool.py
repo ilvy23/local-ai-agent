@@ -4,6 +4,7 @@ import pytest
 
 from agent.tools.files import (
     LIST_DIR_TOOL,
+    SEARCH_FILES_TOOL,
     list_dir,
     read_file,
     search_files,
@@ -14,14 +15,19 @@ from agent.tools.files import (
 def test_read_file_round_trip(tmp_path: Path):
     f = tmp_path / "hello.txt"
     f.write_text("hello world")
-    assert read_file(str(f)) == "hello world"
+    out = read_file(str(f))
+    # Headed with the file it came from: raw text alone is unattributable, so
+    # the model can't tell two files apart or notice it read the wrong one.
+    assert out == f"File {f.resolve()} (11 chars):\nhello world"
 
 
 def test_read_file_truncates(tmp_path: Path):
     f = tmp_path / "big.txt"
     f.write_text("x" * 100)
     out = read_file(str(f), max_chars=10)
-    assert out.startswith("x" * 10)
+    # The header says it's partial — a truncated read must not look whole.
+    assert out.startswith(f"File {f.resolve()} (first 10 of 100 chars):")
+    assert "x" * 10 in out
     assert "[truncated]" in out
 
 
@@ -152,3 +158,21 @@ def test_path_is_required_so_the_model_cannot_silently_list_the_cwd():
     # "." is wherever the CLI was launched — the model has no idea what that is,
     # and defaulting to it is how a request for ~/Music listed the home dir.
     assert LIST_DIR_TOOL.parameters["required"] == ["path"]
+
+
+def test_search_says_where_it_looked(tmp_path):
+    (tmp_path / "a.txt").write_text("the needle is here")
+    out = search_files("needle", str(tmp_path))
+    assert out.splitlines()[0] == f"Searched 'needle' under {tmp_path.resolve()} — 1 match:"
+
+
+def test_no_matches_still_names_the_directory(tmp_path):
+    """'No matches' with no location lets the model conclude the thing doesn't
+    exist anywhere, when it only ever looked in one (possibly wrong) place."""
+    out = search_files("nowhere", str(tmp_path))
+    assert str(tmp_path.resolve()) in out
+    assert "No matches" in out
+
+
+def test_search_path_is_required():
+    assert set(SEARCH_FILES_TOOL.parameters["required"]) == {"pattern", "path"}

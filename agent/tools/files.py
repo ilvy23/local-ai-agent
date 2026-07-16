@@ -38,19 +38,23 @@ def read_file(path: str, max_chars: int = READ_MAX_CHARS, **_kwargs: Any) -> str
     """
     p = _resolve(path)
     if not p.exists():
-        return f"Error: file not found: {path}"
+        return f"Error: file not found: {p}"
     if p.is_dir():
-        return f"Error: {path} is a directory, not a file."
+        return f"Error: {p} is a directory, not a file."
     try:
         raw = p.read_bytes()
     except OSError as exc:
-        return f"Error reading {path}: {exc}"
+        return f"Error reading {p}: {exc}"
     if _is_binary(raw):
-        return f"Error: {path} appears to be a binary file."
+        return f"Error: {p} appears to be a binary file."
     text = raw.decode("utf-8", errors="replace")
+    # Head the content with the file it came from: raw text alone is
+    # unattributable, so the model can't tell two files apart or notice it read
+    # the wrong one — and a truncated read looks identical to a whole file.
     if len(text) > max_chars:
-        return text[:max_chars] + TRUNCATED_MARKER
-    return text
+        header = f"File {p} (first {max_chars} of {len(text)} chars):"
+        return f"{header}\n{text[:max_chars]}{TRUNCATED_MARKER}"
+    return f"File {p} ({len(text)} chars):\n{text}"
 
 
 def list_dir(path: str = ".", **_kwargs: Any) -> str:
@@ -101,9 +105,10 @@ def search_files(pattern: str, path: str = ".", glob: str = "*", **_kwargs: Any)
     """
     root = _resolve(path)
     if not root.exists():
-        return f"Error: path not found: {path}"
+        return f"Error: path not found: {root}"
 
     hits: list[str] = []
+    where = f"'{pattern}' under {root}" + (f" matching {glob}" if glob != "*" else "")
     for candidate in sorted(root.rglob(glob)):
         if not candidate.is_file():
             continue
@@ -120,11 +125,15 @@ def search_files(pattern: str, path: str = ".", glob: str = "*", **_kwargs: Any)
             if pattern in line:
                 hits.append(f"{candidate}:{lineno}: {line.strip()}")
                 if len(hits) >= SEARCH_MAX_HITS:
-                    hits.append(f"[stopped at {SEARCH_MAX_HITS} hits]")
-                    return "\n".join(hits)
+                    return "\n".join(
+                        [f"Searched {where} — stopped at {SEARCH_MAX_HITS} hits:", *hits]
+                    )
+    # Say where we looked, especially when we found nothing: "no matches" without
+    # a location invites the model to conclude the thing doesn't exist at all.
     if not hits:
-        return f"No matches for '{pattern}'."
-    return "\n".join(hits)
+        return f"No matches for {where}."
+    noun = "match" if len(hits) == 1 else "matches"
+    return "\n".join([f"Searched {where} — {len(hits)} {noun}:", *hits])
 
 
 def write_file(path: str, content: str, append: bool = False, **_kwargs: Any) -> str:
@@ -194,10 +203,17 @@ SEARCH_FILES_TOOL = Tool(
         "type": "object",
         "properties": {
             "pattern": {"type": "string", "description": "Literal substring to find."},
-            "path": {"type": "string", "description": "Directory to search (default '.')."},
+            "path": {
+                "type": "string",
+                "description": (
+                    "Directory to search. Give a full path like /home/user/project. "
+                    "'.' is the directory the agent was started in, which is rarely "
+                    "what the user means."
+                ),
+            },
             "glob": {"type": "string", "description": "Filename glob (default '*')."},
         },
-        "required": ["pattern"],
+        "required": ["pattern", "path"],
     },
     handler=search_files,
     risk="safe",

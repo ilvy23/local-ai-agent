@@ -11,6 +11,7 @@ static tier.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from typing import Any
 
@@ -45,13 +46,18 @@ def run_command(
             cwd=cwd,
         )
     except subprocess.TimeoutExpired:
-        return f"Command timed out after {effective_timeout}s."
+        return f"$ {command}\n(in {cwd or os.getcwd()})\nTimed out after {effective_timeout}s."
 
     output = (completed.stdout or "") + (completed.stderr or "")
     if len(output) > OUTPUT_LIMIT:
         output = output[:OUTPUT_LIMIT] + TRUNCATE_MARKER
 
-    return f"exit code: {completed.returncode}\n{output}".rstrip()
+    # Echo the command and the directory it ran in. Bare output is
+    # unattributable — across several calls the model can't tell which result
+    # belongs to which command, and the cwd (wherever the CLI was launched) is
+    # otherwise invisible to it.
+    head = f"$ {command}\n(in {cwd or os.getcwd()}, exit code {completed.returncode})"
+    return f"{head}\n{output}".rstrip()
 
 
 def make_shell_tool(config: dict[str, Any]) -> Tool:
