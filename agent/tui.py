@@ -458,7 +458,15 @@ def run_repl(
         if web_forced:
             web = tool_registry.get("web_search")
             results = web.handler(query=user_input) if web else "web search unavailable"
-            messages = [*messages, {"role": "system", "content": _WEB_INJECT + results[:6000]}]
+            results = results[:6000]
+            # Persist the sources like any other tool result. Without this they
+            # only existed for one turn: the model answered correctly from the
+            # web, then on the next question had nothing but its own (wrong)
+            # training memory and confidently made something up.
+            store.add_message(
+                session_id, "tool", f"Web search results for {user_input!r}:\n{results}"
+            )
+            messages = [*messages, {"role": "system", "content": _WEB_INJECT + results}]
 
         console.print(f"[bold cyan]{persona_name}>[/bold cyan] ", end="")
         try:

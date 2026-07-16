@@ -45,8 +45,19 @@ def _detag(s: str) -> str:
     return html.unescape(re.sub(r"<[^>]+>", "", s)).strip()
 
 
+# DDG serves sponsored links through the same result markup. They're shops, not
+# answers, and they burn the top slots — one query returned two merch stores
+# above Wikipedia.
+_AD_MARKERS = ("duckduckgo.com/y.js", "ad_provider=", "ad_domain=", "/y.js?ad_")
+
+
+def _is_ad(url: str) -> bool:
+    return any(marker in url for marker in _AD_MARKERS)
+
+
 def _unwrap(href: str) -> str:
     """DDG wraps results as //duckduckgo.com/l/?uddg=<real-url>. Unwrap it."""
+    href = html.unescape(href)  # hrefs arrive HTML-escaped (&amp; -> &)
     if "uddg=" in href:
         q = urllib.parse.urlparse(href).query
         got = urllib.parse.parse_qs(q).get("uddg")
@@ -62,12 +73,17 @@ def _search_ddg(query: str, k: int) -> list[dict[str, str]]:
     titles = _RESULT_RE.findall(r.text)
     snippets = _SNIPPET_RE.findall(r.text)
     hits: list[dict[str, str]] = []
-    for i, (href, title) in enumerate(titles[:k]):
+    for i, (href, title) in enumerate(titles):
+        url = _unwrap(href)
+        if _is_ad(url):
+            continue  # sponsored link, not a result
         hits.append({
-            "url": _unwrap(href),
+            "url": url,
             "title": _detag(title),
             "snippet": _detag(snippets[i]) if i < len(snippets) else "",
         })
+        if len(hits) >= k:
+            break
     return hits
 
 
