@@ -70,35 +70,53 @@ def embed_with_retry(llm: Any, text: str, model: str, attempts: int = 3) -> list
     return None
 
 
+_UNEMBEDDED = {
+    # kind -> (sql selecting id + text for rows with no vector)
+    "fact": (
+        "SELECT id, content AS text FROM facts WHERE active = 1 AND id NOT IN "
+        "(SELECT ref_id FROM memory_items WHERE kind = 'fact' AND ref_id IS NOT NULL)"
+    ),
+    "message": (
+        "SELECT id, content AS text FROM messages WHERE role IN ('user','assistant') "
+        "AND content != '' AND id NOT IN "
+        "(SELECT ref_id FROM memory_items WHERE kind = 'message' AND ref_id IS NOT NULL)"
+    ),
+}
+
+
+def repair_unembedded(
+    store: Store, vectors: VectorIndex, llm: Any, config: dict[str, Any]
+) -> dict[str, int]:
+    """Embed facts and messages that have no vector. Returns counts per kind.
+
+    Anything whose embedding failed is stored but unsearchable: it never reached
+    `memory_items`, so semantic recall can't see it and even `reembed` (which
+    reads from `memory_items`) can't rescue it. Without this, one blip means the
+    agent keeps something it can never remember.
+    """
+    fixed = {kind: 0 for kind in _UNEMBEDDED}
+    if not vectors.available:
+        return fixed
+    for kind, sql in _UNEMBEDDED.items():
+        for row in store.conn.execute(sql).fetchall():
+            embedding = embed_with_retry(llm, row["text"], config["models"]["embed"])
+            if embedding is None:
+                continue  # still can't; try again next time rather than losing it
+            try:
+                vectors.add(kind, row["id"], row["text"], embedding)
+                fixed[kind] += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Could not index %s %s: %s", kind, row["id"], exc)
+    if any(fixed.values()):
+        logger.info("Repaired unembedded memory: %s", fixed)
+    return fixed
+
+
 def repair_unembedded_facts(
     store: Store, vectors: VectorIndex, llm: Any, config: dict[str, Any]
 ) -> int:
-    """Embed active facts that have no vector. Returns how many were fixed.
-
-    A fact whose embedding failed is stored but unsearchable: it never reached
-    `memory_items`, so semantic recall can't see it and even `reembed` (which
-    reads from `memory_items`) can't rescue it. Without this, one blip means the
-    agent keeps a fact it can never remember.
-    """
-    if not vectors.available:
-        return 0
-    rows = store.conn.execute(
-        "SELECT id, content FROM facts WHERE active = 1 AND id NOT IN "
-        "(SELECT ref_id FROM memory_items WHERE kind = 'fact' AND ref_id IS NOT NULL)"
-    ).fetchall()
-    fixed = 0
-    for row in rows:
-        embedding = embed_with_retry(llm, row["content"], config["models"]["embed"])
-        if embedding is None:
-            continue  # still can't; try again next time rather than losing it
-        try:
-            vectors.add("fact", row["id"], row["content"], embedding)
-            fixed += 1
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Could not index fact %s: %s", row["id"], exc)
-    if fixed:
-        logger.info("Repaired %d unembedded fact(s)", fixed)
-    return fixed
+    """Facts-only repair. Returns how many were fixed."""
+    return repair_unembedded(store, vectors, llm, config)["fact"]
 
 
 def _extract_json_array(text: str) -> list[str] | None:
@@ -161,5 +179,5 @@ def distill_session(
 
     # Catch up anything a previous run stored but couldn't embed — otherwise the
     # agent keeps facts it can never recall.
-    repair_unembedded_facts(store, vectors, llm, config)
+    repair_unembedded(store, vectors, llm, config)
     return added

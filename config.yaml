@@ -12,6 +12,8 @@ persona:
     \ earns it, and match a quick reply to a quick question."
 data:
   db_path: data/agent.db
+ollama:
+  unload_on_exit: true
 memory:
   recall_k: 6
   context_char_budget: 24000

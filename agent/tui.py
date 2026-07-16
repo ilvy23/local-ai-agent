@@ -87,6 +87,22 @@ def _warn_if_model_cannot_use_tools(console: Console, client: Any, model: str) -
         )
 
 
+def _unload_models_on_exit(console: Console, client: Any, config: dict[str, Any]) -> None:
+    """Free the GPU when leaving the chat, if ollama.unload_on_exit is set.
+
+    Runs from a `finally`, so it happens on /quit, Ctrl-C, and a crash alike —
+    leaving a 5GB model pinned because of an exception would defeat the point.
+    """
+    if not config.get("ollama", {}).get("unload_on_exit", True):
+        return
+    try:
+        freed = client.unload_all()
+    except Exception:  # noqa: BLE001 - cleanup must never raise on the way out
+        return
+    if freed:
+        console.print(f"[dim]freed: {', '.join(freed)}[/dim]")
+
+
 def _http_error_message(exc: httpx.HTTPError) -> str:
     """Render an httpx error for the console: connection issues get the
     friendly "is it running?" hint, but a status error (Ollama reachable but
@@ -145,14 +161,23 @@ def _embed_message(
     message_id: int,
     text: str,
 ) -> None:
-    """Embed a persisted message into the vector index. Never raises."""
+    """Embed a persisted message into the vector index. Never raises.
+
+    Retries: the chat model is resident while this runs, so on a smaller GPU the
+    embedding model may not fit and Ollama answers 500. Without a retry the
+    message is stored but never indexed, and semantic recall can't see it again.
+    """
+    from agent.memory.distill import embed_with_retry
+
     if vectors is None or not vectors.available:
         return
+    embedding = embed_with_retry(client, text, config["models"]["embed"])
+    if embedding is None:
+        return  # repair_unembedded() picks it up later rather than losing it
     try:
-        embedding = client.embed([text], model=config["models"]["embed"])[0]
         vectors.add("message", message_id, text, embedding)
     except Exception as exc:  # noqa: BLE001 - embedding must never break a turn
-        logger.warning("Failed to embed message %s: %s", message_id, exc)
+        logger.warning("Failed to index message %s: %s", message_id, exc)
 
 
 def _extract_tool_call(message: dict[str, Any]) -> dict[str, Any] | None:

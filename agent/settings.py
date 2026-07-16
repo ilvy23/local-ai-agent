@@ -19,6 +19,7 @@ EDITABLE: dict[str, tuple[str, str]] = {
     "background_model": ("models.background", "fact distillation model"),
     "embed_model": ("models.embed", "embedding model (use `reembed` to change + rebuild)"),
     "recall_k": ("memory.recall_k", "memories recalled per chat turn"),
+    "unload_on_exit": ("ollama.unload_on_exit", "free the GPU when you leave the chat"),
     "pause_on_game": ("background.pause_on_game", "pause bg work while gaming"),
     "max_gpu_percent": ("background.max_gpu_percent", "GPU cap for bg work"),
 }

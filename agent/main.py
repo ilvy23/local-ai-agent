@@ -15,7 +15,7 @@ from agent.config import PROJECT_ROOT, load_config
 from agent.llm import OllamaClient
 from agent.memory.store import Store
 from agent.memory.vectors import VectorIndex
-from agent.tui import run_repl
+from agent.tui import _unload_models_on_exit, run_repl
 
 app = typer.Typer(add_completion=False)
 memory_app = typer.Typer(add_completion=False, help="Manage stored facts about you.")
@@ -75,7 +75,13 @@ def chat() -> None:
     client = OllamaClient()
 
     with foreground.session(config), _open_store(config) as store:
-        run_repl(client, config, console=console, store=store)
+        try:
+            run_repl(client, config, console=console, store=store)
+        finally:
+            # In a finally so /quit, Ctrl-C (even mid-generation) and a crash
+            # all free the GPU. run_repl has already distilled by this point,
+            # so nothing still needs the models.
+            _unload_models_on_exit(console, client, config)
 
 
 @app.command()
@@ -127,7 +133,10 @@ def resume(session_id: int | None = typer.Argument(None)) -> None:
                 )
                 raise typer.Exit(code=1)
 
-        run_repl(client, config, console=console, store=store, session_id=session_id)
+        try:
+            run_repl(client, config, console=console, store=store, session_id=session_id)
+        finally:
+            _unload_models_on_exit(console, client, config)
 
 
 @memory_app.command("list")
@@ -225,7 +234,7 @@ def memory_repair() -> None:
     the usual cause), the fact is saved but semantic recall can't see it. This
     finds those and embeds them.
     """
-    from agent.memory.distill import repair_unembedded_facts
+    from agent.memory.distill import _UNEMBEDDED, repair_unembedded
 
     console = Console()
     config = load_config()
@@ -234,21 +243,24 @@ def memory_repair() -> None:
         if not vectors.available:
             console.print("[red]Vector index unavailable — nothing to repair.[/red]")
             raise typer.Exit(1)
-        missing = store.conn.execute(
-            "SELECT COUNT(*) FROM facts WHERE active = 1 AND id NOT IN "
-            "(SELECT ref_id FROM memory_items WHERE kind = 'fact' AND ref_id IS NOT NULL)"
-        ).fetchone()[0]
-        if not missing:
-            console.print("[green]All facts are indexed.[/green] Nothing to repair.")
+        missing = {
+            kind: len(store.conn.execute(sql).fetchall())
+            for kind, sql in _UNEMBEDDED.items()
+        }
+        if not any(missing.values()):
+            console.print("[green]Everything is indexed.[/green] Nothing to repair.")
             return
-        console.print(f"[yellow]{missing} fact(s) not searchable.[/yellow] Embedding…")
-        fixed = repair_unembedded_facts(store, vectors, OllamaClient(), config)
+        summary = ", ".join(f"{n} {k}(s)" for k, n in missing.items() if n)
+        console.print(f"[yellow]{summary} not searchable.[/yellow] Embedding…")
+        fixed = repair_unembedded(store, vectors, OllamaClient(), config)
+
     if fixed == missing:
-        console.print(f"[green]Repaired all {fixed}.[/green]")
+        console.print(f"[green]Repaired all {sum(fixed.values())}.[/green]")
     else:
+        done = ", ".join(f"{n} {k}(s)" for k, n in fixed.items() if n) or "nothing"
         console.print(
-            f"[yellow]Repaired {fixed} of {missing}.[/yellow] The rest failed — is "
-            "Ollama up, and is there room for the embedding model? Re-run to retry."
+            f"[yellow]Repaired {done}.[/yellow] The rest failed — is Ollama up, and "
+            "is there room for the embedding model? Re-run to retry."
         )
 
 

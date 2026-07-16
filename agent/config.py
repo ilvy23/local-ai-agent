@@ -42,6 +42,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "data": {
         "db_path": "data/agent.db",
     },
+    "ollama": {
+        # Free the GPU when you leave the chat. Models otherwise stay resident
+        # for a while, which is faster next time but leaves less room for the
+        # embedding model — on a smaller card that's what makes memory flaky.
+        # Turn this off if you have VRAM to spare and want warm starts.
+        "unload_on_exit": True,
+    },
     "memory": {
         "recall_k": 6,
         "context_char_budget": 24000,

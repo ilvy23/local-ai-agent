@@ -100,6 +100,34 @@ class OllamaClient:
         self._tool_support[model] = result
         return result
 
+    def loaded_models(self) -> list[str]:
+        """Models currently resident in memory, per Ollama's /api/ps."""
+        try:
+            response = self._client.get("/api/ps")
+            response.raise_for_status()
+            return [m["name"] for m in response.json().get("models", []) if m.get("name")]
+        except (httpx.HTTPError, ValueError, KeyError, TypeError):
+            return []
+
+    def unload(self, model: str) -> bool:
+        """Evict `model` from memory now. True if Ollama accepted it.
+
+        `keep_alive: 0` with no prompt is Ollama's documented way to unload —
+        it's what `ollama stop` does.
+        """
+        try:
+            response = self._client.post(
+                "/api/generate", json={"model": model, "keep_alive": 0}
+            )
+            response.raise_for_status()
+            return True
+        except httpx.HTTPError:
+            return False
+
+    def unload_all(self) -> list[str]:
+        """Free every resident model. Returns the ones actually unloaded."""
+        return [m for m in self.loaded_models() if self.unload(m)]
+
     def chat(
         self,
         messages: list[dict[str, str]],
