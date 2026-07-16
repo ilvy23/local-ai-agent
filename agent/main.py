@@ -217,6 +217,41 @@ def memory_prune(
     console.print(f"[green]Pruned {len(junk)} junk fact(s).[/green]")
 
 
+@memory_app.command("repair")
+def memory_repair() -> None:
+    """Re-index facts that were stored but never embedded.
+
+    If the embedding model couldn't run when a fact was learned (a full GPU is
+    the usual cause), the fact is saved but semantic recall can't see it. This
+    finds those and embeds them.
+    """
+    from agent.memory.distill import repair_unembedded_facts
+
+    console = Console()
+    config = load_config()
+    with _open_store(config) as store:
+        vectors = VectorIndex(store)
+        if not vectors.available:
+            console.print("[red]Vector index unavailable — nothing to repair.[/red]")
+            raise typer.Exit(1)
+        missing = store.conn.execute(
+            "SELECT COUNT(*) FROM facts WHERE active = 1 AND id NOT IN "
+            "(SELECT ref_id FROM memory_items WHERE kind = 'fact' AND ref_id IS NOT NULL)"
+        ).fetchone()[0]
+        if not missing:
+            console.print("[green]All facts are indexed.[/green] Nothing to repair.")
+            return
+        console.print(f"[yellow]{missing} fact(s) not searchable.[/yellow] Embedding…")
+        fixed = repair_unembedded_facts(store, vectors, OllamaClient(), config)
+    if fixed == missing:
+        console.print(f"[green]Repaired all {fixed}.[/green]")
+    else:
+        console.print(
+            f"[yellow]Repaired {fixed} of {missing}.[/yellow] The rest failed — is "
+            "Ollama up, and is there room for the embedding model? Re-run to retry."
+        )
+
+
 @memory_app.command("add")
 def memory_add(text: str) -> None:
     """Manually add a fact (embedded for recall)."""

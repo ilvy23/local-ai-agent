@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Any
 
 from agent.jsonx import extract_json_value
@@ -49,6 +50,55 @@ _PROMPT = (
     "facts, reply with []. (Format only — do NOT reuse this content: "
     '["prefers tea over coffee", "has a sister named Lena"].)'
 )
+
+
+def embed_with_retry(llm: Any, text: str, model: str, attempts: int = 3) -> list[float] | None:
+    """Embed `text`, retrying transient failures. None if it never succeeds.
+
+    Embedding runs right after a chat turn, while the chat model is still
+    resident — on a smaller GPU there may not be room for the embedding model
+    too, and Ollama answers 500. That's transient: a moment later it fits.
+    """
+    for attempt in range(attempts):
+        try:
+            return llm.embed([text], model=model)[0]
+        except Exception as exc:  # noqa: BLE001 - never let embedding break a turn
+            if attempt == attempts - 1:
+                logger.warning("Could not embed %r after %d tries: %s", text[:60], attempts, exc)
+                return None
+            time.sleep(1.0 * (attempt + 1))
+    return None
+
+
+def repair_unembedded_facts(
+    store: Store, vectors: VectorIndex, llm: Any, config: dict[str, Any]
+) -> int:
+    """Embed active facts that have no vector. Returns how many were fixed.
+
+    A fact whose embedding failed is stored but unsearchable: it never reached
+    `memory_items`, so semantic recall can't see it and even `reembed` (which
+    reads from `memory_items`) can't rescue it. Without this, one blip means the
+    agent keeps a fact it can never remember.
+    """
+    if not vectors.available:
+        return 0
+    rows = store.conn.execute(
+        "SELECT id, content FROM facts WHERE active = 1 AND id NOT IN "
+        "(SELECT ref_id FROM memory_items WHERE kind = 'fact' AND ref_id IS NOT NULL)"
+    ).fetchall()
+    fixed = 0
+    for row in rows:
+        embedding = embed_with_retry(llm, row["content"], config["models"]["embed"])
+        if embedding is None:
+            continue  # still can't; try again next time rather than losing it
+        try:
+            vectors.add("fact", row["id"], row["content"], embedding)
+            fixed += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not index fact %s: %s", row["id"], exc)
+    if fixed:
+        logger.info("Repaired %d unembedded fact(s)", fixed)
+    return fixed
 
 
 def _extract_json_array(text: str) -> list[str] | None:
@@ -97,11 +147,7 @@ def distill_session(
     for fact in candidates:
         if fact in existing or JUNK_FACT_RE.search(fact):
             continue
-        embedding: list[float] | None = None
-        try:
-            embedding = llm.embed([fact], model=config["models"]["embed"])[0]
-        except Exception as exc:  # noqa: BLE001 - never let distill break the app
-            logger.warning("Could not embed candidate fact %r: %s", fact, exc)
+        embedding = embed_with_retry(llm, fact, config["models"]["embed"])
 
         if embedding is not None:
             if vectors.max_cosine_similarity(embedding, "fact") > DEDUPE_SIMILARITY:
@@ -113,4 +159,7 @@ def distill_session(
         existing.add(fact)
         added.append(fact)
 
+    # Catch up anything a previous run stored but couldn't embed — otherwise the
+    # agent keeps facts it can never recall.
+    repair_unembedded_facts(store, vectors, llm, config)
     return added
