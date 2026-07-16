@@ -54,15 +54,25 @@ def _session_with_user_messages(store, count):
     return session_id
 
 
-def test_skips_when_fewer_than_two_user_messages(tmp_path):
+def test_a_single_message_is_enough_to_remember(tmp_path):
+    """People say the whole thing in one line and leave — "type o negative is my
+    favourite band" was thrown away for years because two were required."""
     store = Store(tmp_path / "agent.db")
     vectors = VectorIndex(store)
     session_id = _session_with_user_messages(store, 1)
 
     added = distill_session(store, vectors, FakeLLM('["a fact"]'), CONFIG, session_id)
 
-    assert added == []
-    assert store.get_active_facts() == []
+    assert added == ["a fact"]
+    assert [f["content"] for f in store.get_active_facts()] == ["a fact"]
+
+
+def test_skips_a_session_with_no_user_messages(tmp_path):
+    store = Store(tmp_path / "agent.db")
+    vectors = VectorIndex(store)
+    session_id = _session_with_user_messages(store, 0)
+
+    assert distill_session(store, vectors, FakeLLM('["a fact"]'), CONFIG, session_id) == []
 
 
 def test_stores_new_facts_and_embeds_them(tmp_path):

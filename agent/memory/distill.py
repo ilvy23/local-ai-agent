@@ -20,7 +20,11 @@ from agent.memory.vectors import VectorIndex
 
 logger = logging.getLogger(__name__)
 
-MIN_USER_MESSAGES = 2
+# One message is enough. People routinely say the whole thing in a single line
+# ("type o negative is my favourite band") and leave — requiring two threw that
+# away before the distiller ever saw it. A throwaway session costs one cheap
+# call that correctly returns [].
+MIN_USER_MESSAGES = 1
 DEDUPE_SIMILARITY = 0.9
 
 # A "fact" that looks like a file path, tool echo, dir listing, or timestamp is
