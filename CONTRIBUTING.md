@@ -38,11 +38,19 @@ Please add a test with any behaviour change. Keep them small and dependency-free
   minimal dependency set.
 - Write a short comment when a non-obvious shortcut is intentional.
 
+## Ideas and feedback
+
+Ideas are very welcome, and they don't have to be fully formed. Start a
+[Discussion](https://github.com/ilvy23/local-ai-agent/discussions) — that's the
+right place for "wouldn't it be cool if", questions, or telling me what annoyed
+you. No template, no ceremony.
+
 ## Reporting bugs
 
-Open an issue with what you ran, what you expected, and what happened (include
-your OS, Python version, and the model you're using). Good first issues are
-labelled [`good first issue`](https://github.com/ilvy23/local-ai-agent/labels/good%20first%20issue).
+Open an [issue](https://github.com/ilvy23/local-ai-agent/issues) with what you
+ran, what you expected, and what happened (include your OS, Python version, and
+the model you're using). Good first issues are labelled
+[`good first issue`](https://github.com/ilvy23/local-ai-agent/labels/good%20first%20issue).
 
 ## Scope
 

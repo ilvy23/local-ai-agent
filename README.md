@@ -151,9 +151,23 @@ Tools go through a risk classifier before they're allowed to run.
   the search snippet.
 - The Windows installer is untested. If you run it, I'd like to hear what broke.
 
+## Ideas are very welcome
+
+Genuinely — if you've got an idea for this, I want to hear it. Half-formed is
+fine, "wouldn't it be cool if" is fine, "this annoyed me" is especially fine.
+
+- **[Discussions](https://github.com/ilvy23/local-ai-agent/discussions)** — ideas,
+  questions, what you're using it for, models you'd pair it with. No format, just
+  say the thing.
+- **[Issues](https://github.com/ilvy23/local-ai-agent/issues)** — something's
+  broken, or a concrete feature request.
+
+You don't need to write code to be useful here. Telling me what's confusing or
+what you wanted it to do is worth a lot.
+
 ## Contributing
 
-Issues and PRs welcome, see [CONTRIBUTING.md](CONTRIBUTING.md). Tests run without
+PRs welcome too, see [CONTRIBUTING.md](CONTRIBUTING.md). Tests run without
 Ollama:
 
 ```bash
