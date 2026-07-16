@@ -54,31 +54,43 @@ def read_file(path: str, max_chars: int = READ_MAX_CHARS, **_kwargs: Any) -> str
 
 
 def list_dir(path: str = ".", **_kwargs: Any) -> str:
-    """List entries in `path` as `name  type  size`, one per line (cap 500)."""
+    """List entries in `path` as `name  type  size`, one per line (cap 500).
+
+    The result is headed with the resolved absolute path. Without it the model
+    only sees bare names and can't tell which directory a listing came from —
+    which is how it ends up describing the wrong folder's contents.
+    """
     p = _resolve(path)
     if not p.exists():
-        return f"Error: directory not found: {path}"
+        return f"Error: directory not found: {p}"
     if not p.is_dir():
-        return f"Error: {path} is not a directory."
+        return f"Error: {p} is not a directory."
     try:
         entries = sorted(p.iterdir(), key=lambda e: e.name)
     except OSError as exc:
-        return f"Error listing {path}: {exc}"
+        return f"Error listing {p}: {exc}"
+
+    if not entries:
+        return f"{p} is empty (0 entries)."
 
     capped = entries[:LIST_CAP]
-    lines = []
+    noun = "entry" if len(entries) == 1 else "entries"
+    lines = [f"Contents of {p} ({len(entries)} {noun}):"]
+    # One readable row per entry. A bare `name<TAB>dir<TAB>-` reads as ambiguous
+    # to a small model — it mistook the name for part of the header above and
+    # reported "no name specified". Naming the fields removes the guesswork.
     for entry in capped:
         if entry.is_dir():
-            lines.append(f"{entry.name}\tdir\t-")
+            lines.append(f"- {entry.name}/ (directory)")
         else:
             try:
                 size = entry.stat().st_size
             except OSError:
                 size = 0
-            lines.append(f"{entry.name}\tfile\t{size}")
+            lines.append(f"- {entry.name} (file, {size} bytes)")
     if len(entries) > LIST_CAP:
         lines.append(f"[showing first {LIST_CAP} of {len(entries)} entries]")
-    return "\n".join(lines) if lines else "(empty directory)"
+    return "\n".join(lines)
 
 
 def search_files(pattern: str, path: str = ".", glob: str = "*", **_kwargs: Any) -> str:
@@ -153,13 +165,23 @@ READ_FILE_TOOL = Tool(
 
 LIST_DIR_TOOL = Tool(
     name="list_dir",
-    description="List the entries (name, type, size) in a directory.",
+    description=(
+        "List the entries (name, type, size) in a directory. The reply is headed "
+        "with the absolute path that was listed — report that folder, not another."
+    ),
     parameters={
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "Directory to list (default '.')."},
+            "path": {
+                "type": "string",
+                "description": (
+                    "Directory to list. Give a full path like /home/user/Music. "
+                    "'.' is the directory the agent was started in, which is "
+                    "rarely what the user means."
+                ),
+            },
         },
-        "required": [],
+        "required": ["path"],
     },
     handler=list_dir,
     risk="safe",

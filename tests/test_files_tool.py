@@ -2,7 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from agent.tools.files import list_dir, read_file, search_files, write_file
+from agent.tools.files import (
+    LIST_DIR_TOOL,
+    list_dir,
+    read_file,
+    search_files,
+    write_file,
+)
 
 
 def test_read_file_round_trip(tmp_path: Path):
@@ -115,3 +121,34 @@ def test_write_file_refuses_data_dir_via_traversal(tmp_path: Path, monkeypatch):
     out = write_file(str(sneaky), "malicious")
     assert "Error" in out or "refus" in out.lower()
     assert not (data_dir / "x.txt").exists()
+
+
+def test_listing_names_the_directory_it_listed(tmp_path):
+    """The model only sees bare filenames otherwise, so it can't tell which
+    folder a listing came from — that's how it ends up describing the wrong one."""
+    (tmp_path / "song.mp3").write_text("x")
+    out = list_dir(str(tmp_path))
+    assert out.splitlines()[0] == f"Contents of {tmp_path.resolve()} (1 entry):"
+    assert "- song.mp3 (file, 1 bytes)" in out
+
+
+def test_listing_counts_entries(tmp_path):
+    for n in ("a", "b", "c"):
+        (tmp_path / n).write_text("")
+    assert f"({3} entries)" in list_dir(str(tmp_path))
+
+
+def test_empty_directory_says_so_with_its_path(tmp_path):
+    out = list_dir(str(tmp_path))
+    assert str(tmp_path.resolve()) in out and "empty" in out
+
+
+def test_errors_name_the_resolved_path(tmp_path):
+    missing = tmp_path / "nope"
+    assert str(missing.resolve()) in list_dir(str(missing))
+
+
+def test_path_is_required_so_the_model_cannot_silently_list_the_cwd():
+    # "." is wherever the CLI was launched — the model has no idea what that is,
+    # and defaulting to it is how a request for ~/Music listed the home dir.
+    assert LIST_DIR_TOOL.parameters["required"] == ["path"]
