@@ -54,8 +54,10 @@ def test_add_wrong_dimension_raises_value_error(store):
     index = VectorIndex(store)
     assert index.available
 
+    # The first vector sets the index size; a later one that disagrees is the error.
+    index.add("fact", 1, "good vector", _vec(1.0))
     with pytest.raises(ValueError, match="768"):
-        index.add("fact", 1, "bad vector", [1.0, 2.0, 3.0])
+        index.add("fact", 2, "bad vector", [1.0, 2.0, 3.0])
 
 
 def test_graceful_degrade_when_extension_unavailable(store, monkeypatch, caplog):

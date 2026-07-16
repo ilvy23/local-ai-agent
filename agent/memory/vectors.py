@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import re
 import struct
 from datetime import UTC, datetime
 
@@ -35,23 +36,19 @@ def _pack(embedding: list[float]) -> bytes:
 class VectorIndex:
     """KNN vector store over `memory_items`, keyed by rowid."""
 
-    # Default output size (nomic-embed-text). The active size can differ if the
-    # embedding model was swapped (e.g. bge-m3 = 1024); it's stored in the DB by
-    # `reembed` and read back here, so the vec0 table and add() always agree.
+    # Fallback size only, for callers that need *a* number before anything has
+    # been embedded. The real size is never guessed: it's whatever the embedding
+    # model actually returns, adopted on the first insert and recorded in
+    # app_state, so the vec0 table always matches the model in config.
     DIM = 768
 
     def __init__(self, store: Store) -> None:
         self._store = store
         self._conn = store.conn
         self.available = False
-        self.DIM = self._read_dim()
 
         try:
             _load_extension(self._conn)
-            self._conn.execute(
-                f"CREATE VIRTUAL TABLE IF NOT EXISTS memory_vectors "
-                f"USING vec0(embedding float[{self.DIM}])"
-            )
             self.available = True
         except Exception as exc:  # noqa: BLE001 - any load failure must degrade
             logger.warning(
@@ -59,23 +56,79 @@ class VectorIndex:
                 "Chat still works; semantic recall is off.",
                 exc,
             )
+            self.DIM = self._read_dim() or type(self).DIM
+            return
 
-    def _read_dim(self) -> int:
-        """Active embedding size, stored by `reembed`; falls back to the default."""
+        # Known size = whatever's recorded, else whatever an existing table was
+        # built at. None means "nothing embedded yet" — the first add() decides.
+        dim = self._read_dim()
+        if dim is None:
+            dim = self._table_dim()
+            if dim is not None and self._is_empty():
+                # An older version created this table from a hardcoded guess and
+                # never embedded anything into it. An empty index has nothing to
+                # lose, so drop it and let the real model size win instead of
+                # failing every query with a dimension mismatch.
+                self._conn.execute("DROP TABLE memory_vectors")
+                self._conn.commit()
+                dim = None
+            elif dim is not None:
+                self._remember_dim(dim)  # populated but unrecorded: trust it
+        if dim:
+            self._create_table(dim)
+        self.DIM = dim
+
+    def _is_empty(self) -> bool:
+        try:
+            return self._conn.execute("SELECT COUNT(*) FROM memory_items").fetchone()[0] == 0
+        except Exception:  # noqa: BLE001 - no table yet == empty
+            return True
+
+    def _read_dim(self) -> int | None:
+        """The recorded embedding size, or None if nothing has been embedded."""
         try:
             row = self._conn.execute(
                 "SELECT v FROM app_state WHERE k = 'embed_dim'"
             ).fetchone()
-            return int(row[0]) if row and row[0] else type(self).DIM
+            return int(row[0]) if row and row[0] else None
         except Exception:  # noqa: BLE001 - missing table on a very fresh DB
-            return type(self).DIM
+            return None
+
+    def _table_dim(self) -> int | None:
+        """Size an existing vec0 table was built at, read back from its DDL."""
+        row = self._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'memory_vectors'"
+        ).fetchone()
+        if not row or not row["sql"]:
+            return None
+        m = re.search(r"float\[(\d+)\]", row["sql"])
+        return int(m.group(1)) if m else None
+
+    def _remember_dim(self, dim: int) -> None:
+        self._conn.execute(
+            "INSERT INTO app_state (k, v) VALUES ('embed_dim', ?) "
+            "ON CONFLICT(k) DO UPDATE SET v = excluded.v",
+            (str(dim),),
+        )
+        self._conn.commit()
+
+    def _create_table(self, dim: int) -> None:
+        self._conn.execute(
+            f"CREATE VIRTUAL TABLE IF NOT EXISTS memory_vectors "
+            f"USING vec0(embedding float[{dim}])"
+        )
 
     def add(self, kind: str, ref_id: int | None, text: str, embedding: list[float]) -> None:
         """Store a metadata row plus its embedding. No-op if unavailable."""
         if not self.available:
             return
 
-        if len(embedding) != self.DIM:
+        if self.DIM is None:
+            # First thing ever embedded: the model's output defines the index size.
+            self.DIM = len(embedding)
+            self._create_table(self.DIM)
+            self._remember_dim(self.DIM)
+        elif len(embedding) != self.DIM:
             raise ValueError(
                 f"Embedding has {len(embedding)} dimensions, expected {self.DIM}. "
                 "models.embed in config.yaml changed without re-embedding — run "
@@ -101,8 +154,14 @@ class VectorIndex:
         kinds: list[str] | None = None,
     ) -> list[tuple[str, str, int | None, float]]:
         """Return up to k nearest items as (text, kind, ref_id, distance)."""
-        if not self.available:
-            return []
+        if not self.available or self.DIM is None:
+            return []  # nothing embedded yet — nothing to match against
+        if len(embedding) != self.DIM:
+            raise ValueError(
+                f"Query embedding has {len(embedding)} dimensions but the index is "
+                f"{self.DIM}. models.embed changed after the index was built — run "
+                "`agent reembed <model>` to rebuild it at the new size."
+            )
 
         # Over-fetch when filtering by kind so the post-filter can still return
         # k results (KNN can't be combined with a WHERE on the joined table).
@@ -127,7 +186,7 @@ class VectorIndex:
     def max_cosine_similarity(self, embedding: list[float], kind: str) -> float:
         """Highest cosine similarity between `embedding` and any stored item of
         `kind`. Returns 0.0 if the index is empty or unavailable."""
-        if not self.available:
+        if not self.available or self.DIM is None or len(embedding) != self.DIM:
             return 0.0
         row = self._conn.execute(
             """
