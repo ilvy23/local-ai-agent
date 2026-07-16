@@ -7,6 +7,7 @@ from typing import Any
 
 import json
 import logging
+import re
 
 import httpx
 from rich.console import Console
@@ -49,6 +50,63 @@ _WEB_INJECT = (
     "well-structured answer grounded in them, and cite the source URLs you used. "
     "If the results don't cover it, say so.\n\n"
 )
+
+
+# Being told you're wrong is the strongest evidence your memory is unreliable —
+# and it's exactly when a small model apologises and invents something worse
+# instead of checking. The system prompt alone doesn't beat that reflex, so
+# detect the correction and instruct it, for this turn only, to go and look.
+_DISAGREE_CUE = re.compile(
+    r"\b(no|nope|nah|not|isn'?t|aren'?t|wasn'?t|weren'?t|wrong|incorrect|false|"
+    r"mistake|mistaken|untrue|actually|bullshit|nonsense)\b",
+    re.IGNORECASE,
+)
+
+_CORRECTION_CHECK = (
+    "Did the user just say the assistant's previous answer was factually wrong "
+    "or inaccurate?\n"
+    "Answer with ONLY 'yes' or 'no'.\n"
+    "'yes' = they are disputing or correcting a fact the assistant stated.\n"
+    "'no' = anything else: a new question, a follow-up, thanks, or correcting "
+    "their own wording."
+)
+
+_CORRECTION_NUDGE = (
+    "The user is telling you your previous answer was wrong. Your memory of this "
+    "is demonstrably unreliable, so do NOT answer from memory and do NOT simply "
+    "agree. Use web_search now to check the facts, then reply based on what you "
+    "find."
+)
+
+
+def _looks_like_disagreement(text: str) -> bool:
+    """Cheap gate so the classifier below only runs on plausible corrections."""
+    return bool(_DISAGREE_CUE.search(text))
+
+
+def _is_factual_correction(
+    client: Any, config: dict[str, Any], assistant_text: str, user_text: str
+) -> bool:
+    """Is the user disputing a fact we just stated? Never raises.
+
+    Both sides are needed: "no, those aren't in there" says nothing on its own —
+    without the answer it refers to, the classifier can only shrug and say no.
+    """
+    pair = f"Assistant said: {assistant_text[:1500]}\n\nUser replied: {user_text}"
+    try:
+        reply = "".join(
+            client.chat(
+                messages=[
+                    {"role": "system", "content": _CORRECTION_CHECK},
+                    {"role": "user", "content": pair},
+                ],
+                model=config["models"]["background"],
+                stream=False,
+            )
+        ).strip().lower()
+    except Exception:  # noqa: BLE001 - if unsure, leave the turn alone
+        return False
+    return reply.startswith("yes")
 
 
 def _split_web_trigger(text: str) -> tuple[str, bool]:
@@ -427,6 +485,7 @@ def run_repl(
     console.print(f"[bold cyan]{persona_name}[/bold cyan] is ready. Type /help for commands.")
     _warn_if_model_cannot_use_tools(console, client, model)
 
+    last_reply: str | None = None  # what a "you were wrong" would be about
     while True:
         try:
             user_input = console.input("[bold green]you>[/bold green] ").strip()
@@ -467,6 +526,15 @@ def run_repl(
                 session_id, "tool", f"Web search results for {user_input!r}:\n{results}"
             )
             messages = [*messages, {"role": "system", "content": _WEB_INJECT + results}]
+        elif (
+            last_reply
+            and tool_registry.get("web_search")
+            and _looks_like_disagreement(user_input)
+            and _is_factual_correction(client, config, last_reply, user_input)
+        ):
+            # The cheap cue keeps the classifier off the ~90% of turns that
+            # couldn't be a correction, so a normal message costs nothing extra.
+            messages = [*messages, {"role": "system", "content": _CORRECTION_NUDGE}]
 
         console.print(f"[bold cyan]{persona_name}>[/bold cyan] ", end="")
         try:
@@ -489,6 +557,7 @@ def run_repl(
             continue
 
         console.print(reply)
+        last_reply = reply
         assistant_msg_id = store.add_message(session_id, "assistant", reply)
         _embed_message(vectors, client, config, assistant_msg_id, reply)
 

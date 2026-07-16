@@ -20,13 +20,34 @@ logger = logging.getLogger(__name__)
 
 def _tool_instructions(tool_names: list[str]) -> str:
     names = ", ".join(tool_names)
-    return (
+    parts = [
         "You have access to these tools: "
         + names
         + ". If you need one, reply with ONLY a JSON object of the form "
         '{"tool": "<name>", "arguments": {...}} and nothing else. Otherwise, '
         "answer normally."
-    )
+    ]
+    if "web_search" in tool_names:
+        # Without this the model searches for "what songs are on X" but not for
+        # "do you know anything about X" — and, worst of all, not when the user
+        # says it got something wrong. It cannot feel the difference between
+        # recalling a detail and inventing one, so name the situations for it.
+        parts.append(
+            "When to use web_search: your knowledge is out of date and has gaps, "
+            "and inventing a detail feels exactly like remembering one. Look it "
+            "up instead of answering from memory when:\n"
+            "- the user corrects you or says you got something wrong. That is the "
+            "clearest evidence your memory is unreliable here, so check it rather "
+            "than guessing again or simply agreeing.\n"
+            "- the answer turns on specifics: names, dates, versions, prices, "
+            "track listings, who did what, or anything current.\n"
+            "- you are about to state something you are not certain is right.\n"
+            "Just answer, without searching, for conversation, opinions, "
+            "arithmetic, writing, and general concepts you reliably know.\n"
+            "Never present a guess as fact. If you did not look it up and you are "
+            "unsure, say so."
+        )
+    return "\n\n".join(parts)
 
 
 def _semantic_hits(
