@@ -65,9 +65,12 @@ test it on, so treat it as experimental:
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-The script installs [uv](https://docs.astral.sh/uv/), pulls the dependencies,
-makes sure Ollama is up, and downloads the two default models. That last part is
-about 6 GB, once. Running it twice is harmless.
+The script walks you through it: checks your system, sets up
+[uv](https://docs.astral.sh/uv/) and the dependencies, then offers to install
+[Ollama](https://ollama.com) if you don't have it and pulls the two models it
+needs (~6 GB, once). It asks before downloading anything and only does what's
+missing, so running it twice is harmless. Add `--yes` (or `-Yes` on Windows) to
+skip the questions.
 
 <details>
 <summary>Already have uv and Ollama?</summary>
