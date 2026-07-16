@@ -16,6 +16,7 @@ from agent.memory.recall import build_context
 from agent.memory.store import Store
 from agent.memory.vectors import VectorIndex
 from agent.safety import RiskLevel, block_reason, classify_command
+from agent.tools.files import safe_text
 from agent.tools.registry import Tool, ToolRegistry, default_registry, parse_tool_call_fallback
 
 logger = logging.getLogger(__name__)
@@ -309,6 +310,12 @@ def _execute_tool(
         result = tool.handler(**arguments)
     except Exception as exc:  # noqa: BLE001 - handler errors go back to the model
         result = f"Error running tool '{name}': {exc}"
+
+    # Backstop: a result that can't be encoded as UTF-8 kills the whole session
+    # when it's sent to Ollama as JSON. Filenames are bytes and a single legacy
+    # one (a music folder named `Alizée` in latin-1) was enough. The tools clean
+    # their own output, but nothing reaching the model should be able to do this.
+    result = safe_text(result)
 
     if is_shell and level is RiskLevel.SAFE:
         console.print(f"[dim][ran: {command}][/dim]")

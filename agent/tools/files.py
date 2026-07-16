@@ -27,6 +27,26 @@ def _resolve(path: str) -> Path:
     return Path(path).expanduser().resolve()
 
 
+def safe_text(text: str) -> str:
+    """Make `text` encodable as UTF-8, recovering legacy filename bytes.
+
+    Filenames are bytes, not text, and nothing guarantees they're UTF-8. Python
+    surfaces undecodable bytes as lone surrogates (os.listdir uses
+    surrogateescape), and those blow up the moment anything encodes the string
+    as UTF-8 — such as sending a tool result to Ollama as JSON. One music folder
+    named `Alizée` in latin-1 was enough to kill a whole chat session.
+
+    Recover the original bytes and read them as latin-1: it never fails and gets
+    the common legacy case right. Anything still undecodable becomes U+FFFD.
+    """
+    try:
+        text.encode("utf-8")
+        return text
+    except UnicodeEncodeError:
+        raw = text.encode("utf-8", "surrogateescape")
+        return raw.decode("latin-1", "replace")
+
+
 def _is_binary(data: bytes) -> bool:
     return b"\x00" in data
 
@@ -75,23 +95,24 @@ def list_dir(path: str = ".", **_kwargs: Any) -> str:
         return f"Error listing {p}: {exc}"
 
     if not entries:
-        return f"{p} is empty (0 entries)."
+        return f"{safe_text(str(p))} is empty (0 entries)."
 
     capped = entries[:LIST_CAP]
     noun = "entry" if len(entries) == 1 else "entries"
-    lines = [f"Contents of {p} ({len(entries)} {noun}):"]
+    lines = [f"Contents of {safe_text(str(p))} ({len(entries)} {noun}):"]
     # One readable row per entry. A bare `name<TAB>dir<TAB>-` reads as ambiguous
     # to a small model — it mistook the name for part of the header above and
     # reported "no name specified". Naming the fields removes the guesswork.
     for entry in capped:
+        name = safe_text(entry.name)
         if entry.is_dir():
-            lines.append(f"- {entry.name}/ (directory)")
+            lines.append(f"- {name}/ (directory)")
         else:
             try:
                 size = entry.stat().st_size
             except OSError:
                 size = 0
-            lines.append(f"- {entry.name} (file, {size} bytes)")
+            lines.append(f"- {name} (file, {size} bytes)")
     if len(entries) > LIST_CAP:
         lines.append(f"[showing first {LIST_CAP} of {len(entries)} entries]")
     return "\n".join(lines)
@@ -108,7 +129,7 @@ def search_files(pattern: str, path: str = ".", glob: str = "*", **_kwargs: Any)
         return f"Error: path not found: {root}"
 
     hits: list[str] = []
-    where = f"'{pattern}' under {root}" + (f" matching {glob}" if glob != "*" else "")
+    where = f"'{pattern}' under {safe_text(str(root))}" + (f" matching {glob}" if glob != "*" else "")
     for candidate in sorted(root.rglob(glob)):
         if not candidate.is_file():
             continue
@@ -123,7 +144,7 @@ def search_files(pattern: str, path: str = ".", glob: str = "*", **_kwargs: Any)
         text = raw.decode("utf-8", errors="replace")
         for lineno, line in enumerate(text.splitlines(), start=1):
             if pattern in line:
-                hits.append(f"{candidate}:{lineno}: {line.strip()}")
+                hits.append(f"{safe_text(str(candidate))}:{lineno}: {line.strip()}")
                 if len(hits) >= SEARCH_MAX_HITS:
                     return "\n".join(
                         [f"Searched {where} — stopped at {SEARCH_MAX_HITS} hits:", *hits]
