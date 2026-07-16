@@ -35,20 +35,32 @@ JUNK_FACT_RE = re.compile(
 )
 
 _PROMPT = (
-    "Extract durable PERSONAL facts the user explicitly stated about THEMSELVES "
-    "in this conversation: their identity, preferences, relationships, work, or "
-    "ongoing personal projects.\n"
-    "STRICT RULES — follow exactly:\n"
-    "- Only include a fact the user DIRECTLY stated about their own life.\n"
-    "- Do NOT include anything about the computer, operating system, files, "
-    "directories, network, hardware, or the output of any command or tool.\n"
-    "- Do NOT include anything about the assistant, this app, or the session itself.\n"
-    "- Do NOT guess, infer, or speculate. Never use words like 'presumably', "
-    "'possibly', 'probably', or 'implied'. If you are not certain the user "
-    "stated it about themselves, leave it out.\n"
-    "Reply with ONLY a JSON array of short factual strings. If there are no such "
-    "facts, reply with []. (Format only — do NOT reuse this content: "
-    '["prefers tea over coffee", "has a sister named Lena"].)'
+    "You pull out durable facts about the USER from what they said, so an "
+    "assistant can remember them in future conversations.\n"
+    "\n"
+    "Include anything lasting they revealed about themselves:\n"
+    "- who they are: name, age, where they live, job, what they study\n"
+    "- what they like or dislike: favourites, preferences, hobbies, taste\n"
+    "- the people and pets in their life\n"
+    "- what they are working on, learning, or planning\n"
+    "\n"
+    "How they phrase it does not matter. All of these are facts about the user:\n"
+    '  "X is my favourite band"      -> the user\'s favourite band is X\n'
+    '  "my dog is called Rex"        -> the user has a dog called Rex\n'
+    '  "I work nights"               -> the user works nights\n'
+    '  "been playing piano for years" -> the user plays piano\n'
+    "A sentence whose grammatical subject is a band, a pet or a hobby is still "
+    "a fact about the user if they said it about their own life.\n"
+    "\n"
+    "Leave out:\n"
+    "- their computer: files, paths, directories, commands, or any tool output\n"
+    "- the assistant, this app, or this conversation\n"
+    "- one-off requests and questions ('list my music', 'what's the weather')\n"
+    "- anything you would have to guess at — only what they actually said\n"
+    "\n"
+    "Reply with ONLY a JSON array of short strings, each written in the third "
+    "person about the user, e.g. the form 'likes …' / 'has a …' / 'works as …'. "
+    "Reply [] if they revealed nothing lasting about themselves."
 )
 
 
