@@ -472,6 +472,18 @@ def run_repl(
     for web_tool in make_web_tools(console):
         tool_registry.register(web_tool)
 
+    # Optional extensions from ~/.config/agent/plugins (see agent/plugins.py).
+    from agent.plugins import PluginContext, load_plugins
+
+    loaded = load_plugins(
+        PluginContext(
+            registry=tool_registry, store=store, vectors=vectors,
+            llm=client, config=config, console=console,
+        )
+    )
+    if loaded:
+        console.print(f"[dim]plugins: {', '.join(loaded)}[/dim]")
+
     resuming = session_id is not None
     title_pending = not resuming
     if session_id is None:
