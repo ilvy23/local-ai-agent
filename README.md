@@ -74,7 +74,7 @@ about 6 GB, once. Running it twice is harmless.
 
 ```bash
 uv sync
-ollama pull dolphin3:8b bge-m3
+ollama pull qwen2.5:7b bge-m3
 ```
 </details>
 
@@ -123,11 +123,17 @@ agent reembed MODEL     # change embedding model, rebuild the index
 
 | Setting | Default | What it's for |
 |---|---|---|
-| `models.chat` | `dolphin3:8b` | chatting and tool use |
-| `models.background` | `dolphin3:8b` | pulling facts out of conversations |
+| `models.chat` | `qwen2.5:7b` | chatting and tool use |
+| `models.background` | `qwen2.5:7b` | pulling facts out of conversations |
 | `models.embed` | `bge-m3` | embeddings, multilingual, 1024-dim |
 
-Any Ollama model works. If you swap the embedding model, run
+**The chat model has to support tool calling** (`ollama show <model>` should list
+`tools` under capabilities). Ollama silently ignores tools for models that don't,
+and then the model will happily *invent* a directory listing rather than admit it
+can't read one. `qwen2.5:7b` and `llama3.1:8b` both work; `dolphin3` and `gemma2`
+don't. It warns you at startup if you pick one that can't.
+
+Otherwise any Ollama model works. If you swap the embedding model, run
 `agent reembed <model>` and it rebuilds the index at the new size.
 
 ## How it fits together

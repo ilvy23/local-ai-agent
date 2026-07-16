@@ -235,6 +235,10 @@ def test_model_rejecting_tools_falls_back_to_json_parsed_tool_call_end_to_end(tm
 
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
+        if request.url.path == "/api/show":  # the startup capability probe
+            return httpx.Response(
+                200, json={"capabilities": ["completion", "tools"]}, request=request
+            )
         requests_seen.append(body)
         if "tools" in body:
             return httpx.Response(

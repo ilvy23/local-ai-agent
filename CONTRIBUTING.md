@@ -13,7 +13,7 @@ uv run agent menu       # try it
 ```
 
 You'll also need [Ollama](https://ollama.com) running with the default models
-(`ollama pull dolphin3:8b bge-m3`) to use the agent — but **not** to run the
+(`ollama pull qwen2.5:7b bge-m3`) to use the agent — but **not** to run the
 tests.
 
 ## Running the tests

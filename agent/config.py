@@ -19,8 +19,11 @@ DEFAULT_DATA_DIR = PROJECT_ROOT / "data"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "models": {
-        "chat": "dolphin3:8b",       # interactive chat
-        "background": "dolphin3:8b",  # background tasks (fact distillation)
+        # Chat MUST be a tool-capable model (`ollama show <m>` lists "tools").
+        # Ollama silently drops the tools for models without template support,
+        # and the model then invents results instead of running anything.
+        "chat": "qwen2.5:7b",
+        "background": "qwen2.5:7b",  # fact distillation (no tools needed)
         "embed": "bge-m3",           # embeddings (multilingual, 1024-dim)
     },
     "persona": {

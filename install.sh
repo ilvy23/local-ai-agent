@@ -50,7 +50,7 @@ if ! curl -s http://localhost:11434/api/version >/dev/null 2>&1; then
 fi
 
 # --- models (skip any already present) -------------------------------------
-for m in dolphin3:8b bge-m3; do
+for m in qwen2.5:7b bge-m3; do
   if ollama list 2>/dev/null | grep -q "${m%%:*}"; then
     say "model $m already present"
   else

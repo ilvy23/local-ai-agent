@@ -66,6 +66,27 @@ MAX_ITERATIONS_HINT = (
 )
 
 
+def _warn_if_model_cannot_use_tools(console: Console, client: Any, model: str) -> None:
+    """Say so loudly if the chat model can't call tools.
+
+    Ollama silently ignores `tools=` for models whose template has no slot for
+    them, so the model never sees the tools and cheerfully invents results —
+    a made-up directory listing looks exactly like a real one. Better a warning
+    at startup than a confident lie later.
+    """
+    try:
+        supported = client.supports_tools(model)
+    except Exception:  # noqa: BLE001 - a warning must never break the chat
+        return
+    if supported is False:
+        console.print(
+            f"[yellow]Heads up:[/yellow] [bold]{model}[/bold] doesn't support tool "
+            "calling, so it can't read files, run commands, or search the web — "
+            "and it may [bold]make up[/bold] results instead of saying so.\n"
+            "[dim]Use a tools-capable model:  agent settings set chat_model qwen2.5:7b[/dim]"
+        )
+
+
 def _http_error_message(exc: httpx.HTTPError) -> str:
     """Render an httpx error for the console: connection issues get the
     friendly "is it running?" hint, but a status error (Ollama reachable but
@@ -372,6 +393,7 @@ def run_repl(
             print_resume_preview(console, history)
 
     console.print(f"[bold cyan]{persona_name}[/bold cyan] is ready. Type /help for commands.")
+    _warn_if_model_cannot_use_tools(console, client, model)
 
     while True:
         try:
@@ -460,6 +482,7 @@ def _run_repl_stateless(
     """Chat loop with no persistence or memory (used when no store is given)."""
     session = ChatSession(client=client, model=model, system_prompt=system_prompt)
     console.print(f"[bold cyan]{persona_name}[/bold cyan] is ready. Type /help for commands.")
+    _warn_if_model_cannot_use_tools(console, client, model)
 
     while True:
         try:

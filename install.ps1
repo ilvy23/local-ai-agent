@@ -48,7 +48,7 @@ try {
 }
 
 # --- models (skip any already present) -------------------------------------
-foreach ($m in @("dolphin3:8b", "bge-m3")) {
+foreach ($m in @("qwen2.5:7b", "bge-m3")) {
     $short = $m.Split(":")[0]
     if ((ollama list 2>$null) -match $short) {
         Say "model $m already present"

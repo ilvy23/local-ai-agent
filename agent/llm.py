@@ -76,6 +76,29 @@ class OllamaClient:
             timeout=httpx.Timeout(timeout, connect=5.0),
         )
         self._tools_unsupported: set[str] = set()
+        self._tool_support: dict[str, bool | None] = {}
+
+    def supports_tools(self, model: str) -> bool | None:
+        """Does `model` advertise tool support? None if it can't be determined.
+
+        This matters more than it looks: Ollama only rejects `tools=` outright
+        for *some* models. For others (dolphin3, gemma2) it accepts the request
+        and silently drops the tools, because the model's chat template has no
+        slot for them. The model never learns the tools exist, so when you ask
+        it to list a directory it invents a plausible listing instead of calling
+        anything. Asking up front is the only way to catch that.
+        """
+        if model in self._tool_support:
+            return self._tool_support[model]
+        try:
+            response = self._client.post("/api/show", json={"model": model})
+            response.raise_for_status()
+            caps = response.json().get("capabilities")
+            result = ("tools" in caps) if isinstance(caps, list) else None
+        except (httpx.HTTPError, ValueError):
+            result = None  # unknown — never cry wolf on a transport hiccup
+        self._tool_support[model] = result
+        return result
 
     def chat(
         self,
