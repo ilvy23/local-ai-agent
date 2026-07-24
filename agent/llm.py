@@ -136,6 +136,7 @@ class OllamaClient:
         num_ctx: int | None = None,
         num_gpu: int | None = None,
         temperature: float | None = None,
+        options: dict[str, Any] | None = None,
     ) -> Iterator[str]:
         """Send a chat request and yield assistant content tokens as they arrive.
 
@@ -143,21 +144,24 @@ class OllamaClient:
         Ollama's default is small (~4k), which silently truncates long inputs.
         `num_gpu` caps how many layers go on the GPU — needed for a model too
         big for VRAM (e.g. Gemma-27B on 8GB), where Ollama's auto-split
-        over-commits the GPU and crashes with cudaMalloc OOM. Raises httpx
-        exceptions if Ollama is unreachable; callers handle those.
+        over-commits the GPU and crashes with cudaMalloc OOM. `options` passes
+        any additional Ollama sampling options straight through (repeat_penalty,
+        top_p, top_k) — coding mode needs these and they merge under the explicit
+        arguments above. Raises httpx exceptions if Ollama is unreachable;
+        callers handle those.
         """
         payload: dict[str, Any] = {
             "model": model, "messages": messages, "stream": stream, "keep_alive": KEEP_ALIVE,
         }
-        options = {}
+        merged: dict[str, Any] = dict(options) if options else {}
         if num_ctx:
-            options["num_ctx"] = num_ctx
+            merged["num_ctx"] = num_ctx
         if num_gpu is not None:
-            options["num_gpu"] = num_gpu
+            merged["num_gpu"] = num_gpu
         if temperature is not None:
-            options["temperature"] = temperature
-        if options:
-            payload["options"] = options
+            merged["temperature"] = temperature
+        if merged:
+            payload["options"] = merged
 
         with self._client.stream("POST", "/api/chat", json=payload) as response:
             response.raise_for_status()
