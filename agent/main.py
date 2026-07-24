@@ -85,6 +85,58 @@ def chat() -> None:
 
 
 @app.command()
+def code(
+    task: str = typer.Argument(..., help="What to change, e.g. 'fix the failing test'."),
+    file: list[str] = typer.Option(
+        None, "--file", "-f", help="File(s) to focus on (repeatable)."
+    ),
+    apply: bool = typer.Option(
+        False, "--apply", help="Write the change into the repo on success."
+    ),
+    repo: Path = typer.Option(None, "--repo", help="Repo root (default: current dir)."),
+) -> None:
+    """Generate an edit, verify it against the check ladder, and repair on failure."""
+    from agent.coding.workspace import WorkspaceError
+    from agent.coding_cli import format_event, run_code
+
+    console = Console()
+    config = load_config()
+    client = OllamaClient()
+    base = (repo or Path.cwd()).resolve()
+
+    def emit(event: object) -> None:
+        line = format_event(event)  # type: ignore[arg-type]
+        if line is not None:
+            console.print(line)
+
+    with foreground.session(config):
+        try:
+            result = run_code(
+                client, config, base, task, file or [], apply=apply, emit=emit
+            )
+        except WorkspaceError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from None
+        finally:
+            _unload_models_on_exit(console, client, config)
+
+    if result.success:
+        console.print(
+            f"[bold green]Done[/bold green] at tier {int(result.tier)} "
+            f"in {result.attempts} attempt(s)."
+        )
+        if result.diff:
+            console.print(result.diff)
+        if apply:
+            console.print(f"[green]Wrote:[/green] {', '.join(result.changed_files)}")
+        else:
+            console.print("[dim]Re-run with --apply to write these changes.[/dim]")
+    else:
+        console.print(f"[bold red]Could not finish:[/bold red] {result.reason}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def sessions() -> None:
     """List past chat sessions."""
     console = Console()

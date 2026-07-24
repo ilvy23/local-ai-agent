@@ -104,6 +104,7 @@ hit-and-miss about that, which is exactly why `/web` exists.
 
 ```
 agent chat              # new chat
+agent code TASK -f FILE # edit code, verify against tests, repair on failure
 agent resume [id]       # pick up the last one, or a specific one
 agent sessions          # what you've talked about
 agent menu              # the menu
