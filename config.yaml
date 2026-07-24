@@ -28,3 +28,25 @@ background:
   max_gpu_percent: 40
   max_cpu_percent: 50
   max_ram_gb: 16
+coding:
+  executor:
+    model: qwen2.5-coder:7b
+    temperature: 0.1
+    repeat_penalty: 1.05     # never higher — corrupts code on small models
+    top_p: 0.8
+    top_k: 20
+    num_ctx: 16384
+    max_repair_attempts: 4
+  guards:
+    test_files_readonly: true   # do not disable — anti-reward-hacking
+    coverage_gate: true
+    llm_judge: true
+  sandbox:
+    kind: git-worktree
+    network: false
+    timeout_seconds: 30
+    memory_mb: 2048
+  escalation:
+    tier3_model: qwen3-coder:30b
+    tier3_enabled: true         # set false if < 5 tok/s
+    total_budget_seconds: 300

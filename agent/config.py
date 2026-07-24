@@ -73,6 +73,49 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_cpu_percent": 50,
         "max_ram_gb": 16,
     },
+    "coding": {
+        # Coding mode: generate an edit, verify it against a check ladder, and
+        # repair on failure. The defaults below are tuned for an 8 GB card
+        # running small coder models — see the implementation plan for the
+        # research behind each number.
+        "executor": {
+            "model": "qwen2.5-coder:7b",
+            # Code wants near-deterministic sampling. repeat_penalty ABOVE ~1.05
+            # corrupts code output on small models (they legitimately repeat
+            # `self.`, indentation, loop vars) — never raise it for code.
+            "temperature": 0.1,
+            "repeat_penalty": 1.05,
+            "top_p": 0.8,
+            "top_k": 20,
+            "num_ctx": 16384,
+            "max_repair_attempts": 4,
+        },
+        "guards": {
+            # The loop's credibility rests on "tests passed" meaning something.
+            # Reward hacking (hardcoding expected values, editing the test to
+            # match the bug) is documented in production agents; these guards
+            # are what keep an eval number honest. Do not disable lightly.
+            "test_files_readonly": True,  # reject any diff touching a test file
+            "coverage_gate": True,        # changed lines must be executed by tests
+            "llm_judge": True,            # a fresh-context "is this gaming the test?"
+        },
+        "sandbox": {
+            # Edits are verified in an isolated git worktree with no network and
+            # a wall-clock + memory cap, so a runaway generation can't hang the
+            # session or reach out.
+            "kind": "git-worktree",
+            "network": False,
+            "timeout_seconds": 30,
+            "memory_mb": 2048,
+        },
+        "escalation": {
+            # When the 7B stalls (identical AST or byte-identical error), climb
+            # the ladder rather than burning more attempts on a confused model.
+            "tier3_model": "qwen3-coder:30b",
+            "tier3_enabled": True,       # set false if it measures < 5 tok/s
+            "total_budget_seconds": 300,
+        },
+    },
 }
 
 
