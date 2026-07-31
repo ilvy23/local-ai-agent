@@ -2,18 +2,31 @@
 
 Reuses the Typer app in-process (no subprocess, no duplicated logic): each leaf
 choice is an argv the app already knows how to run. Submenus nest; `{...}`
-placeholders prompt for a value first. Neon theme, because a local tool you live
-in should have a little character.
+placeholders prompt for a value first. Lantern theme — warm candlelight on
+black, because a local tool you live in should feel like a cosy little light.
 """
 
 from __future__ import annotations
 
+import random
+import time
+
 from rich.align import Align
 from rich.console import Console, Group
+from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
 
-_CYAN, _PINK, _GREEN, _PURPLE, _DIM = "#05d9e8", "#ff2a6d", "#39ff14", "#b967ff", "#5a5a8a"
+# ── Lantern palette · warm candlelight on black ─────────────────────────────
+_FLAME = "#ffb454"   # amber gold   · lantern body, headings
+_GLOW  = "#ffe1a8"   # soft glow    · numbers, highlights
+_EMBER = "#ff8c42"   # deep ember   · prompts, accents
+_WARM  = "#f0c489"   # candlelight  · labels, body text
+_DIMW  = "#8a6b45"   # dim amber    · hints
+_BG    = "#0b0805"   # warm near-black background
+# Older lines still use the neon names — alias them onto the warm palette so the
+# whole menu re-themes for free.
+_CYAN, _PINK, _GREEN, _PURPLE, _DIM = _WARM, _EMBER, _GLOW, _FLAME, _DIMW
 
 
 def cmd(argv: list[str]):
@@ -48,7 +61,7 @@ def _about(console: Console) -> None:
     from agent import main
 
     body = Text()
-    body.append("agent", style=f"bold {_CYAN}")
+    body.append("✦ lantern", style=f"bold {_FLAME}")
     body.append(f"  v{main.__version__}\n", style=_DIM)
     body.append("A fully-local AI agent. Everything runs against your own\n", style=_CYAN)
     body.append("Ollama — no account, no cloud, nothing leaves your machine.\n\n", style=_CYAN)
@@ -85,7 +98,6 @@ _SETTINGS = [("◢ SETTINGS", [
     ("Change a setting  ▸ name, value", cmd(["settings", "set", "{setting}", "{value}"])),
     ("Re-embed memory with a new model  ▸ model", cmd(["reembed", "{model}"])),
 ])]
-
 
 def _from_menu_models(console: Console) -> None:
     from agent.coding import models
@@ -130,14 +142,105 @@ _MAIN = [
     ]),
 ]
 
-_BANNER = r"""
- ▄▄▄       ▄████ ▓█████ ███▄    █ ▄▄▄█████▓
-▒████▄    ██▒ ▀█▒▓█   ▀ ██ ▀█   █ ▓  ██▒ ▓▒
-▒██  ▀█▄ ▒██░▄▄▄░▒███  ▓██  ▀█ ██▒▒ ▓██░ ▒░
-░██▄▄▄▄██░▓█  ██▓▒▓█  ▄▓██▒  ▐▌██▒░ ▓██▓ ░
- ▓█   ▓██░▒▓███▀▒░▒████▒██░   ▓██░  ▒██▒ ░
- ▒▒   ▓▒█░░▒   ▒ ░░ ▒░ ░ ▒░   ▒ ▒   ▒ ░░
-"""
+# A symmetric hanging lantern: ring, domed cap, glass with a radial glow core
+# (░▒▓█), a footed base, a finial. Every row mirrors around the centre column.
+_LANTERN_ART = [
+    "        ⊙        ",
+    "       ╱ ╲       ",
+    "      ╭───╮      ",
+    "     ╭┴───┴╮     ",
+    "    ╭─┴───┴─╮    ",
+    "   ╭─┴─────┴─╮   ",
+    "   │ ╭─────╮ │   ",
+    "   │ │░▒▓▒░│ │   ",
+    "  ·│ │▒▓█▓▒│ │·  ",
+    "   │ │▓███▓│ │   ",
+    "  ·│ │▒▓█▓▒│ │·  ",
+    "   │ │░▒▓▒░│ │   ",
+    "   │ ╰─────╯ │   ",
+    "   ╰─┬─────┬─╯   ",
+    "     ╰──┬──╯     ",
+    "        ╨        ",
+]
+
+# glow chars → (dim fg, hot fg, halo-strength) — the halo is a warm background
+# that makes the flame's light bleed into the black around it.
+_GLOW_CHARS = {
+    "░": ("#2a1a08", "#d0965a", 0.16),
+    "▒": ("#341f08", "#ffa863", 0.19),
+    "▓": ("#3e260a", "#ffc06a", 0.22),
+    "█": ("#4a2e0c", "#fff0d2", 0.26),
+}
+_HALO_HOT, _FRAME_DIM = "#2c1a06", "#6a4a1e"
+
+
+def _blend(a: str, b: str, t: float) -> str:
+    """Interpolate two #rrggbb colours (t=0 → a, t=1 → b)."""
+    t = max(0.0, min(1.0, t))
+    ar = [int(a[i:i + 2], 16) for i in (1, 3, 5)]
+    br = [int(b[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{int(ar[i] + (br[i] - ar[i]) * t):02x}" for i in range(3))
+
+
+def _lantern(t: float = 1.0) -> Text:
+    """The lantern at glow intensity t∈[0,1]. Glow cells get a warm background
+    halo so the light appears to shine out into the dark. NOTE: no per-line
+    justify — the rows are fixed-width and left-aligned so the box stays true;
+    the whole block is centred by the caller (Align.center)."""
+    out = Text()
+    for row in _LANTERN_ART:
+        for ch in row:
+            if ch in _GLOW_CHARS:
+                dim, hot, halo = _GLOW_CHARS[ch]
+                out.append(ch, style=f"bold {_blend(dim, hot, t)} on {_blend(_BG, _HALO_HOT, halo * t)}")
+            elif ch == "·":
+                out.append(ch, style=_blend("#241a0c", _EMBER, t))
+            elif ch == " ":
+                out.append(" ")
+            elif ch in ("⊙", "╨"):
+                out.append(ch, style=f"bold {_blend(_FRAME_DIM, _GLOW, t)}")
+            else:
+                out.append(ch, style=_blend(_FRAME_DIM, _FLAME, 0.4 + 0.6 * t))
+        out.append("\n")
+    return out
+
+
+def _wordmark(t: float = 1.0) -> Text:
+    """'l a n t e r n' with a per-letter gradient on a warm glow bar."""
+    grad = [_EMBER, _FLAME, _GLOW, _GLOW, _GLOW, _FLAME, _EMBER]
+    bg = _blend(_BG, "#2a1806", 0.7 * t)
+    wm = Text(justify="center")
+    wm.append("\n")
+    for ch, col in zip("lantern", grad):
+        wm.append(" " + ch, style=f"bold {_blend(_FRAME_DIM, col, t)} on {bg}")
+    wm.append(" \n", style=f"on {bg}")
+    if t > 0.6:
+        wm.append("·  carry your own light  ·\n", style=f"italic {_DIMW}")
+    return wm
+
+
+def _banner_group(lt: float = 1.0, wt: float = 1.0):
+    """Lit lantern + wordmark, each centred independently so they line up."""
+    return Group(Align.center(_lantern(lt)), _wordmark(wt))
+
+
+def _light_the_lantern(console: Console) -> None:
+    """Intro: the flame catches (glow ramps up), breathes and flickers as if
+    alive, then the wordmark glows on. Plays once when the menu opens."""
+    with Live(console=console, refresh_per_second=30, transient=True) as live:
+        for i in range(14):                       # the flame catches — smooth ramp
+            live.update(Align.center(_lantern((i / 13) ** 1.5)))
+            time.sleep(0.032)
+        for k in range(13):                       # breathes/flickers, easing calm
+            damp = 1 - k / 12                      # jitter shrinks toward the end
+            t = 0.88 + 0.12 * random.uniform(-1, 1) * damp
+            live.update(Align.center(_lantern(max(0.68, min(1.0, t)))))
+            time.sleep(0.05)
+        for i in range(8):                        # wordmark glows on over a STEADY flame
+            live.update(_banner_group(1.0, i / 7))
+            time.sleep(0.05)
+        live.update(_banner_group(1.0, 1.0))       # settle on the clean, full banner
+        time.sleep(0.3)                            # brief hold — no jitter on hand-off
 
 _PROMPTS = {
     "{setting}": "setting name",
@@ -157,7 +260,7 @@ _PROMPTS = {
 
 
 # Free-text prose fields where a pasted multi-line prompt should be kept whole.
-_MULTILINE_TOKENS = {"{goal}", "{task}", "{text}", "{draft}", "{note}", "{query}"}
+_MULTILINE_TOKENS = {"{goal}", "{task}", "{text}", "{note}", "{query}"}
 
 
 def _read_prose(console: Console, label: str) -> str:
@@ -207,8 +310,8 @@ def _render(sections, console: Console, root: bool) -> None:
 
     rows: list = []
     if root:
-        rows.append(Align.center(Text(_BANNER.strip("\n"), style=f"bold {_CYAN}")))
-        rows.append(Align.center(Text("// local · offline · yours //", style=f"italic {_PURPLE}")))
+        rows.append(_banner_group())
+        rows.append(Align.center(Text("· local · offline · yours ·", style=f"italic {_DIMW}")))
     rows.append(Text(""))
     n = 0
     for title, items in sections:
@@ -222,8 +325,8 @@ def _render(sections, console: Console, root: bool) -> None:
         rows.append(Text(""))
     rows.append(Text("   [ q] exit" if root else "   [ b] back", style=_DIM))
     console.print(Panel(
-        Group(*rows), border_style=_PINK,
-        title=f"[{_GREEN}]AGENT[/] [{_DIM}]v{main.__version__}[/]",
+        Group(*rows), border_style=_FLAME, style=f"on {_BG}", padding=(0, 1),
+        title=f"[bold {_GLOW}]✦ lantern[/] [{_DIM}]v{main.__version__}[/]",
         subtitle=f"[{_DIM}]select ▸ number  ·  q to quit[/]",
     ))
 
@@ -234,7 +337,7 @@ def _run(sections, console: Console, app, root: bool) -> None:
         _render(sections, console, root)
         choice = console.input(f"\n [{_GREEN}]╺╸[/] ").strip().lower()
         if root and choice in ("q", "quit", "exit", "0", ""):
-            console.print(f"[{_PURPLE}]// see you around //[/]")
+            console.print(f"[{_EMBER}]  ·  the flame goes out. see you soon.  ·[/]")
             return
         if not root and choice in ("b", "back", "0", ""):
             return
@@ -267,4 +370,8 @@ def run_menu() -> None:
     from agent.main import app  # imported here to avoid a circular import
 
     console = Console()
+    try:
+        _light_the_lantern(console)   # the flame catches on open
+    except Exception:  # noqa: BLE001 - a dumb terminal shouldn't block the menu
+        pass
     _run(_MAIN, console, app, root=True)

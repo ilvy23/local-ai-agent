@@ -103,7 +103,10 @@ uv run agent menu     # if you'd rather click through things
 uv run agent chat     # if you know what you want
 ```
 
-<div align="center"><img src="assets/menu.svg" alt="the agent menu" width="600"></div>
+<div align="center">
+<img src="assets/lantern-menu.gif" alt="the warm lantern-themed menu, animating open" width="600">
+<br><sub><i>The menu lights up like a lantern — warm candlelight on black.</i></sub>
+</div>
 
 In a chat, tack `/web` onto anything that needs current information:
 
