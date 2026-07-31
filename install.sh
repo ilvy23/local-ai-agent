@@ -123,29 +123,47 @@ fi
 
 # ── 4. models ───────────────────────────────────────────────────────────────
 step "Models"
+
+# Exact match on the full "name:tag" in `ollama list` — a substring check would
+# false-positive (e.g. "qwen2.5" also matches "qwen2.5-coder-abliterate").
+model_installed() {
+  local spec="$1" want
+  case "$spec" in *:*) want="$spec";; *) want="$spec:latest";; esac
+  ollama list 2>/dev/null | awk 'NR>1{print $1}' | grep -qxF "$want"
+}
+
+# Required: chat + memory.
 MISSING=""
 for m in "qwen2.5:7b" "bge-m3"; do
-  if ollama list 2>/dev/null | grep -q "^${m%%:*}"; then
-    ok "$m ${D}already downloaded${N}"
-  else
-    MISSING="$MISSING $m"
-  fi
+  if model_installed "$m"; then ok "$m ${D}already downloaded${N}"; else MISSING="$MISSING $m"; fi
 done
-
 if [ -n "$MISSING" ]; then
-  info "${B}qwen2.5:7b${N} ${D}(4.7 GB)${N} does the thinking — it must be a model"
-  info "that supports tools, or the agent can't read files or search."
+  info "${B}qwen2.5:7b${N} ${D}(4.7 GB)${N} does the thinking — it must support tools,"
+  info "or the agent can't read files or search."
   info "${B}bge-m3${N} ${D}(1.2 GB)${N} powers the memory."
   info "missing:${B}$MISSING${N}"
   if ask "Download them now? ${D}(one time)${N}"; then
-    for m in $MISSING; do
-      info "pulling $m…"
-      ollama pull "$m"
-      ok "$m ready"
-    done
+    for m in $MISSING; do info "pulling $m…"; ollama pull "$m" && ok "$m ready" \
+      || warn "pull failed for $m — retry later with ${C}ollama pull $m${N}"; done
   else
-    warn "skipped — agent won't work until you run:"
+    warn "skipped — agent won't chat until you run:"
     for m in $MISSING; do info "  ${C}ollama pull $m${N}"; done
+  fi
+fi
+
+# Optional: the coding model for `agent code` (skip if you only want chat).
+CODE_MODEL="huihui_ai/qwen2.5-coder-abliterate:7b"
+if model_installed "$CODE_MODEL"; then
+  ok "coding model ${D}already downloaded${N}"
+else
+  info "${B}agent code${N} (write & fix code) needs an uncensored coder:"
+  info "${B}$CODE_MODEL${N} ${D}(~4.7 GB)${N}"
+  if ask "Also download the coding model? ${D}(skip if you only want chat)${N}"; then
+    info "pulling $CODE_MODEL…"
+    ollama pull "$CODE_MODEL" && ok "coding model ready" \
+      || warn "pull failed — retry later with ${C}ollama pull $CODE_MODEL${N}"
+  else
+    info "skipped — grab it later with ${C}ollama pull $CODE_MODEL${N}"
   fi
 fi
 
@@ -157,4 +175,5 @@ printf '%s │%s                                             %s│%s\n' "$G" "$N
 printf '%s │%s     %suv run agent menu%s  %s← start here%s         %s│%s\n' "$G" "$N" "$C" "$N" "$D" "$N" "$G" "$N"
 printf '%s │%s     %suv run agent chat%s  %s← straight to a chat%s %s│%s\n' "$G" "$N" "$C" "$N" "$D" "$N" "$G" "$N"
 printf '%s ╰─────────────────────────────────────────────╯%s\n' "$G" "$N"
-printf '\n   %sTip:%s end any message with %s/web%s to search the internet.\n\n' "$D" "$N" "$C" "$N"
+printf '\n   %sTip:%s end any chat message with %s/web%s to search the internet,\n' "$D" "$N" "$C" "$N"
+printf '        or run %suv run agent code "build a CLI tool with tests"%s\n\n' "$C" "$N"

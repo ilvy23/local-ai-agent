@@ -129,30 +129,53 @@ if (OllamaUp) {
 
 # -- 4. models ---------------------------------------------------------------
 Step "Models"
-$missing = @()
-foreach ($m in @("qwen2.5:7b", "bge-m3")) {
-    $short = $m.Split(":")[0]
-    if ((ollama list 2>$null) -match [regex]::Escape($short)) {
-        Ok "$m already downloaded"
-    } else {
-        $missing += $m
-    }
+
+# Exact match on the full "name:tag" from `ollama list` — a substring check would
+# false-positive (e.g. "qwen2.5" also matches "qwen2.5-coder-abliterate").
+function ModelInstalled($spec) {
+    $want = if ($spec -match ':') { $spec } else { "${spec}:latest" }
+    $names = (ollama list 2>$null | Select-Object -Skip 1 |
+              ForEach-Object { ($_ -split '\s+')[0] })
+    return ($names -contains $want)
 }
 
+# Required: chat + memory.
+$missing = @()
+foreach ($m in @("qwen2.5:7b", "bge-m3")) {
+    if (ModelInstalled $m) { Ok "$m already downloaded" } else { $missing += $m }
+}
 if ($missing.Count -gt 0) {
-    Info "qwen2.5:7b (4.7 GB) does the thinking - it must be a model that"
-    Info "supports tools, or the agent can't read files or search."
+    Info "qwen2.5:7b (4.7 GB) does the thinking - it must support tools, or the"
+    Info "agent can't read files or search."
     Info "bge-m3 (1.2 GB) powers the memory."
     Info "missing: $($missing -join ' ')"
     if (Ask "Download them now? (one time)") {
         foreach ($m in $missing) {
             Info "pulling $m..."
             ollama pull $m
-            Ok "$m ready"
+            if ($LASTEXITCODE -eq 0) { Ok "$m ready" }
+            else { Warn "pull failed for $m - retry later with: ollama pull $m" }
         }
     } else {
-        Warn "skipped - agent won't work until you run:"
+        Warn "skipped - agent won't chat until you run:"
         foreach ($m in $missing) { Info "  ollama pull $m" }
+    }
+}
+
+# Optional: the coding model for `agent code` (skip if you only want chat).
+$codeModel = "huihui_ai/qwen2.5-coder-abliterate:7b"
+if (ModelInstalled $codeModel) {
+    Ok "coding model already downloaded"
+} else {
+    Info "agent code (write & fix code) needs an uncensored coder:"
+    Info "$codeModel (~4.7 GB)"
+    if (Ask "Also download the coding model? (skip if you only want chat)") {
+        Info "pulling $codeModel..."
+        ollama pull $codeModel
+        if ($LASTEXITCODE -eq 0) { Ok "coding model ready" }
+        else { Warn "pull failed - retry later with: ollama pull $codeModel" }
+    } else {
+        Info "skipped - grab it later with: ollama pull $codeModel"
     }
 }
 
@@ -165,5 +188,6 @@ Write-Host " |     uv run agent menu   <- start here       |" -ForegroundColor G
 Write-Host " |     uv run agent chat   <- straight to chat |" -ForegroundColor Green
 Write-Host " +---------------------------------------------+" -ForegroundColor Green
 Write-Host ""
-Write-Host "   Tip: end any message with /web to search the internet." -ForegroundColor DarkGray
+Write-Host "   Tip: end a chat message with /web to search the internet," -ForegroundColor DarkGray
+Write-Host '         or run  uv run agent code "build a CLI tool with tests"' -ForegroundColor DarkGray
 Write-Host ""
