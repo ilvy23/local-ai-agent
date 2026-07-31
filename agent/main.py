@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import time
-from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
@@ -65,6 +63,58 @@ def governor() -> None:
         console.print(f"[yellow]Background work would PAUSE: {reason}[/yellow]")
     else:
         console.print("[green]Background work would run (machine is clear).[/green]")
+
+
+@app.command()
+def code(
+    task: str = typer.Argument(..., help="A goal ('build a CSV parser with tests') or a fix ('fix the failing test')."),
+    file: list[str] = typer.Option([], "--file", "-f", help="Fix mode: file(s) the model may edit (repeatable)."),
+    test: str | None = typer.Option(None, "--test", "-t", help="Fix mode: pytest target."),
+) -> None:
+    """Autonomous coding in a sandbox. With no -f it plans/writes/tests/debugs on
+    its own toward the goal; with -f it runs the focused fix-the-tests loop."""
+    from agent.coding_cli import run_code, run_goal_cli
+
+    if file:
+        raise typer.Exit(run_code(task, list(file), test))
+    raise typer.Exit(run_goal_cli(task))
+
+
+@app.command("code-eval")
+def code_eval(
+    seeds: int = typer.Option(3, "--seeds", help="Fix-loop: seeds per task (≥3 for real numbers)."),
+    agentic: bool = typer.Option(False, "--agentic", help="Benchmark the autonomous loop instead."),
+    trials: int = typer.Option(2, "--trials", help="Agentic: trials per task (slow)."),
+) -> None:
+    """Benchmark the coding loops against held-out tests.
+
+    Default: the focused fix loop (pass@k, false-success). With --agentic: the
+    open-ended autonomous loop on multi-file goals."""
+    if agentic:
+        from agent.coding.evals.agentic import run_agentic_harness
+
+        run_agentic_harness(trials)
+    else:
+        from agent.coding.evals.harness import run_harness
+
+        run_harness(seeds)
+
+
+@app.command("code-model")
+def code_model(
+    set_to: str | None = typer.Argument(None, help="Model tag to use (omit to pick interactively)."),
+) -> None:
+    """Show or swap the coding model (uncensored coders recommended)."""
+    from rich.console import Console
+
+    from agent.coding import models
+
+    console = Console()
+    if set_to:
+        models.set_model(set_to)
+        console.print(f"coding model set to {set_to}")
+    else:
+        models.menu_choose(console)
 
 
 @app.command()

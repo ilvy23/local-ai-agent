@@ -86,6 +86,29 @@ _SETTINGS = [("◢ SETTINGS", [
     ("Re-embed memory with a new model  ▸ model", cmd(["reembed", "{model}"])),
 ])]
 
+
+def _from_menu_models(console: Console) -> None:
+    from agent.coding import models
+    models.menu_choose(console)
+
+
+def _from_menu_effort(console: Console) -> None:
+    from agent.coding import models
+    models.choose_effort(console)
+
+
+_CODING = [("◢ CODING  ·  run agent from inside your project's git repo", [
+    ("Autonomous build/fix  ▸ goal (it plans, writes, tests, debugs)", cmd(["code", "{goal}"])),
+    ("Fix code against tests  ▸ task, file", cmd(["code", "{task}", "-f", "{codefile}"])),
+    ("Fix (specific test target)  ▸ task, file, test",
+     cmd(["code", "{task}", "-f", "{codefile}", "-t", "{codetest}"])),
+    ("Swap the coding model (uncensored coders)", call(_from_menu_models)),
+    ("How much to write  ▸ min / mid / max", call(_from_menu_effort)),
+    ("Benchmark the fix loop (eval)  ▸ seeds", cmd(["code-eval", "--seeds", "{seeds}"])),
+    ("Benchmark the autonomous loop (multi-file, slow)  ▸ trials",
+     cmd(["code-eval", "--agentic", "--trials", "{trials}"])),
+])]
+
 _SYSTEM = [("◢ SYSTEM", [
     ("Live status panel (machine + Ollama)", cmd(["panel"])),
     ("Is background work paused? (governor)", cmd(["governor"])),
@@ -99,6 +122,7 @@ _SYSTEM = [("◢ SYSTEM", [
 _MAIN = [
     ("◢ MENU  ·  pick a number", [
         ("Chat  ▸", sub(_CHAT)),
+        ("Coding  ▸  (fix code against your tests)", sub(_CODING)),
         ("Memory  ▸", sub(_MEMORY)),
         ("System  ▸", sub(_SYSTEM)),
         ("Settings  ▸", sub(_SETTINGS)),
@@ -122,14 +146,50 @@ _PROMPTS = {
     "{text}": "fact to remember",
     "{id}": "fact id",
     "{model}": "embedding model (e.g. bge-m3)",
+    "{note}": "note",
+    "{goal}": "the goal (paste multi-line if you want; e.g. build a CLI todo app with tests)",
+    "{task}": "what to do (multi-line ok; e.g. fix the failing test in parser.py)",
+    "{codefile}": "file the model may edit (relative path)",
+    "{codetest}": "pytest target (optional, e.g. tests/test_parser.py)",
+    "{seeds}": "seeds (3+ for real numbers)",
+    "{trials}": "trials per task (agentic runs are slow; 1-2)",
 }
+
+
+# Free-text prose fields where a pasted multi-line prompt should be kept whole.
+_MULTILINE_TOKENS = {"{goal}", "{task}", "{text}", "{draft}", "{note}", "{query}"}
+
+
+def _read_prose(console: Console, label: str) -> str:
+    """Read a value that may span several lines. A pasted block hits stdin all at
+    once, so after the first line we drain any lines already buffered — that keeps
+    a copied multi-line prompt intact instead of leaking its tail into the next
+    menu prompt. A normally typed single line has nothing buffered and returns as-is."""
+    import select
+    import sys
+
+    first = console.input(f"  [{_PINK}]▸[/] {label}: ")
+    lines = [first]
+    if sys.stdin.isatty():
+        try:
+            while select.select([sys.stdin], [], [], 0.1)[0]:
+                more = sys.stdin.readline()
+                if not more:
+                    break
+                lines.append(more.rstrip("\n"))
+        except (OSError, ValueError):
+            pass  # stdin not selectable → just use what we have
+    return "\n".join(lines).strip()
 
 
 def _fill(template: list[str], console: Console) -> list[str] | None:
     argv: list[str] = []
     for tok in template:
         if tok in _PROMPTS:
-            val = console.input(f"  [{_PINK}]▸[/] {_PROMPTS[tok]}: ").strip()
+            if tok in _MULTILINE_TOKENS:
+                val = _read_prose(console, _PROMPTS[tok])
+            else:
+                val = console.input(f"  [{_PINK}]▸[/] {_PROMPTS[tok]}: ").strip()
             if not val:
                 return None
             argv.append(val)

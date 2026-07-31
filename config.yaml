@@ -28,3 +28,8 @@ background:
   max_gpu_percent: 40
   max_cpu_percent: 50
   max_ram_gb: 16
+coding:
+  executor:
+    model: huihui_ai/qwen2.5-coder-abliterate:7b
+  build:
+    effort: max

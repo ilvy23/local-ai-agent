@@ -136,6 +136,7 @@ class OllamaClient:
         num_ctx: int | None = None,
         num_gpu: int | None = None,
         temperature: float | None = None,
+        extra_options: dict[str, Any] | None = None,
     ) -> Iterator[str]:
         """Send a chat request and yield assistant content tokens as they arrive.
 
@@ -156,6 +157,8 @@ class OllamaClient:
             options["num_gpu"] = num_gpu
         if temperature is not None:
             options["temperature"] = temperature
+        if extra_options:  # code sampling: repeat_penalty, top_p, top_k, …
+            options.update(extra_options)
         if options:
             payload["options"] = options
 
