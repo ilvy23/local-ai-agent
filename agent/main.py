@@ -44,7 +44,7 @@ def _open_llm() -> OllamaClient:
 @app.command()
 def version() -> None:
     """Print the agent version."""
-    typer.echo(f"agent {__version__}")
+    typer.echo(f"lantern {__version__}")
 
 
 @app.command()
