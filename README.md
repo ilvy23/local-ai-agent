@@ -4,8 +4,8 @@
 
 **A local AI agent that lives in your terminal.**
 
-It runs against your own [Ollama](https://ollama.com). No account, no API key,
-nothing phoning home.
+It chats, remembers, searches the web, and writes code — all against your own
+[Ollama](https://ollama.com). No account, no API key, nothing phoning home.
 
 [![CI](https://github.com/ilvy23/local-ai-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/ilvy23/local-ai-agent/actions/workflows/ci.yml)
 ![License: MIT](https://img.shields.io/badge/license-MIT-39ff14)
@@ -13,9 +13,9 @@ nothing phoning home.
 
 <br>
 
-<img src="assets/web-demo.gif" alt="agent doing a live /web search in the terminal" width="680">
+<img src="assets/coding-demo.gif" alt="the agent writing and testing code in the terminal" width="680">
 
-<sub><i>Asking it something its model can't know. It searches, reads the pages, and answers.</i></sub>
+<sub><i>Give it a goal. It writes the code live, runs the tests, and only says “done” when they actually pass.</i></sub>
 
 </div>
 
@@ -36,9 +36,23 @@ the whole thing fits in your head.
 out of conversations and recalls them later by meaning, not keyword. (It used to
 remember all sorts of junk. That took a while to fix.)
 
+**Writes and fixes code.** Give it a goal — `agent code "build a CLI word-counter
+with tests"` — and it writes the files, runs them in a throwaway git worktree, and
+loops until the tests pass. You watch it type in real time. Point it at a failing
+test instead (`-f`) and it debugs the code. It can't fake success: every change
+runs a real ladder (syntax → lint → tests), it isn't allowed to edit the tests to
+cheat, and a reviewer pass rejects gamed diffs. Honest limit — a 7B is genuinely
+good at focused builds and fixes; a whole complex app in one shot is past its edge,
+so swap in a bigger model (`agent code-model`) when you want more.
+
 **Searches the web when you ask.** Put `/web` at the end of a message and it goes
 and looks. You watch it visit each site in real time, and it answers with the
 sources. No API key — it scrapes DuckDuckGo.
+
+<div align="center">
+<img src="assets/web-demo.gif" alt="agent doing a live /web search in the terminal" width="620">
+<br><sub><i>The same idea for chat: ask it something its model can’t know, and it looks it up.</i></sub>
+</div>
 
 **Uses your computer.** It can run shell commands and read or write files. Safe
 stuff runs, anything risky asks first, and genuinely dangerous things are refused
@@ -78,6 +92,7 @@ skip the questions.
 ```bash
 uv sync
 ollama pull qwen2.5:7b bge-m3
+ollama pull huihui_ai/qwen2.5-coder-abliterate:7b   # for `agent code`
 ```
 </details>
 
@@ -107,6 +122,10 @@ agent chat              # new chat
 agent resume [id]       # pick up the last one, or a specific one
 agent sessions          # what you've talked about
 agent menu              # the menu
+agent code "GOAL"       # write a small program + tests, from scratch
+agent code "FIX" -f F   # debug an existing file against its tests
+agent code-model        # show / swap the coding model
+agent code-eval         # benchmark the coding loops on held-out tests
 agent memory list       # what it thinks it knows about you
 agent memory search Q   # semantic, falls back to substring
 agent memory add TEXT   # tell it something directly
@@ -129,6 +148,7 @@ agent reembed MODEL     # change embedding model, rebuild the index
 | `models.chat` | `qwen2.5:7b` | chatting and tool use |
 | `models.background` | `qwen2.5:7b` | pulling facts out of conversations |
 | `models.embed` | `bge-m3` | embeddings, multilingual, 1024-dim |
+| `coding.executor.model` | `qwen2.5-coder-abliterate:7b` | the model behind `agent code` (swap with `agent code-model`) |
 
 **The chat model has to support tool calling** (`ollama show <model>` should list
 `tools` under capabilities). Ollama silently ignores tools for models that don't,
@@ -156,6 +176,10 @@ Tools go through a risk classifier before they're allowed to run.
 - Small local models are not GPT-5. An 8B is fine for chat and decent at
   summarising a web page, but it will occasionally say something confidently
   wrong. The `/web` sources are there so you can check it.
+- The coding agent is only as smart as the model behind it. A 7B nails focused
+  builds and "fix this failing test," but a large, fully-tested app in one go is
+  beyond it — that's the model, not the harness (which keeps every failure
+  visible and refuses to fake a pass). A bigger model raises the ceiling.
 - Some sites block scrapers. Those show up as `unreachable` and it falls back to
   the search snippet.
 - The Windows installer is untested. If you run it, I'd like to hear what broke.
