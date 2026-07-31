@@ -121,6 +121,13 @@ _CODING = [("◢ CODING  ·  run agent from inside your project's git repo", [
      cmd(["code-eval", "--agentic", "--trials", "{trials}"])),
 ])]
 
+_PROMPT = [("◢ PROMPT LAB  ·  improve · plan · anonymise, locally", [
+    ("Prompt studio (chat or one-time — improve · plan · anonymise)", cmd(["prompt"])),
+    ("Resume a saved prompt chat", cmd(["prompt", "resume"])),
+    ("Quick: improve a prompt  ▸ prompt", cmd(["prompt", "improve", "{promptext}"])),
+    ("Quick: anonymise a prompt  ▸ prompt", cmd(["prompt", "anon", "{promptext}"])),
+])]
+
 _SYSTEM = [("◢ SYSTEM", [
     ("Live status panel (machine + Ollama)", cmd(["panel"])),
     ("Is background work paused? (governor)", cmd(["governor"])),
@@ -135,6 +142,7 @@ _MAIN = [
     ("◢ MENU  ·  pick a number", [
         ("Chat  ▸", sub(_CHAT)),
         ("Coding  ▸  (fix code against your tests)", sub(_CODING)),
+        ("Prompt lab  ▸  (improve · anonymise a prompt)", sub(_PROMPT)),
         ("Memory  ▸", sub(_MEMORY)),
         ("System  ▸", sub(_SYSTEM)),
         ("Settings  ▸", sub(_SETTINGS)),
@@ -142,6 +150,7 @@ _MAIN = [
     ]),
 ]
 
+# The lantern — the flame window (4 chars wide) is filled/animated separately.
 # A symmetric hanging lantern: ring, domed cap, glass with a radial glow core
 # (░▒▓█), a footed base, a finial. Every row mirrors around the centre column.
 _LANTERN_ART = [
@@ -250,6 +259,7 @@ _PROMPTS = {
     "{id}": "fact id",
     "{model}": "embedding model (e.g. bge-m3)",
     "{note}": "note",
+    "{promptext}": "your prompt (paste it, multi-line ok)",
     "{goal}": "the goal (paste multi-line if you want; e.g. build a CLI todo app with tests)",
     "{task}": "what to do (multi-line ok; e.g. fix the failing test in parser.py)",
     "{codefile}": "file the model may edit (relative path)",
@@ -260,7 +270,7 @@ _PROMPTS = {
 
 
 # Free-text prose fields where a pasted multi-line prompt should be kept whole.
-_MULTILINE_TOKENS = {"{goal}", "{task}", "{text}", "{note}", "{query}"}
+_MULTILINE_TOKENS = {"{goal}", "{task}", "{text}", "{note}", "{query}", "{promptext}"}
 
 
 def _read_prose(console: Console, label: str) -> str:

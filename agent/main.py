@@ -15,9 +15,12 @@ from agent.memory.store import Store
 from agent.memory.vectors import VectorIndex
 from agent.tui import _unload_models_on_exit, run_repl
 
+
 app = typer.Typer(add_completion=False)
 memory_app = typer.Typer(add_completion=False, help="Manage stored facts about you.")
 app.add_typer(memory_app, name="memory")
+prompt_app = typer.Typer(add_completion=False, help="Improve or anonymise a prompt, locally.")
+app.add_typer(prompt_app, name="prompt")
 
 __version__ = "0.1.0"
 
@@ -115,6 +118,48 @@ def code_model(
         console.print(f"coding model set to {set_to}")
     else:
         models.menu_choose(console)
+
+
+@prompt_app.callback(invoke_without_command=True)
+def prompt_default(ctx: typer.Context) -> None:
+    """Prompt studio: improve / plan / anonymise a prompt, guided and local.
+
+    With no sub-command, launches the interactive studio."""
+    if ctx.invoked_subcommand is None:
+        from agent.promptlab import studio
+
+        studio()
+
+
+@prompt_app.command("improve")
+def prompt_improve(
+    text: str = typer.Argument(..., help="Your rough prompt (quote it)."),
+) -> None:
+    """Quick: sharpen a rough prompt (asks clarifying questions, then you can
+    correct it)."""
+    from agent.promptlab import cli_improve
+
+    cli_improve(text)
+
+
+@prompt_app.command("anon")
+def prompt_anon(
+    text: str = typer.Argument(..., help="The prompt to anonymise (quote it)."),
+    strength: str = typer.Option("heavy", "--strength", "-s",
+                                 help="light | heavy | poison | max"),
+) -> None:
+    """Quick: rewrite a prompt so it reveals nothing about you (light/heavy/poison/max)."""
+    from agent.promptlab import cli_anon
+
+    cli_anon(text, strength)
+
+
+@prompt_app.command("resume")
+def prompt_resume() -> None:
+    """Resume a saved prompt chat."""
+    from agent.promptlab import resume
+
+    resume()
 
 
 @app.command()

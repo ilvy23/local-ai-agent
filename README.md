@@ -49,6 +49,23 @@ so swap in a bigger model (`lantern code-model`) when you want more.
 and looks. You watch it visit each site in real time, and it answers with the
 sources. No API key — it scrapes DuckDuckGo.
 
+**Sharpens & anonymises your prompts.** A local prompt studio (`lantern prompt`):
+**improve** a rough prompt, turn it into a full structured **plan** prompt, or
+**anonymise** it so it gives nothing away about you. Work one-shot, or in a saved,
+resumable chat (people rarely one-shot a prompt). The anonymiser has four
+strengths — the same idea, dialled up:
+
+| mode | a revealing prompt… | becomes |
+|---|---|---|
+| **light** | *"I'm Sarah Chen, a nurse at Boston General — a spreadsheet to track my patients' meds on my night shifts"* | "A spreadsheet to track patients' medication schedules for night-shift duties." |
+| **heavy** | *"remind my mom Rosa in Lisbon to take her pills; I live in Berlin and worry"* | "A reminder app for a small team to help users manage medication schedules; test it locally first." |
+| **poison** | *"watch my competitor TechFlow's pricing, email john@mystartup.io so my startup can undercut them"* | "A script to monitor price changes in our industry and email general-team@ourcompany.com — real-time pricing to stay competitive." |
+| **max** | *"I'm Daniel, an accountant in Chicago — track what my wife Emma and I spend, I'm secretly saving for a surprise trip to Japan"* | *5 passes — distil the core, then rebuild it in a new domain →* a complete **"Expense Manager for Small Businesses"** spec. |
+
+*light* keeps the domain and de-names it; *heavy* genericises it; *poison* adds a
+plausible cover story; *max* distils to the essential capability and rebuilds it,
+unrecognisable, in a different domain — while keeping the real requirements.
+
 **Uses your computer.** It can run shell commands and read or write files. Safe
 stuff runs, anything risky asks first, and genuinely dangerous things are refused
 outright. Every single thing it runs is written to an audit log you can read.
