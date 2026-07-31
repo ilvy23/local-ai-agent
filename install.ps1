@@ -45,7 +45,7 @@ function OllamaUp {
 
 Write-Host ""
 Write-Host " +---------------------------------------------+" -ForegroundColor Cyan
-Write-Host " |   agent - a local AI in your terminal       |" -ForegroundColor Cyan
+Write-Host " |   lantern - a local AI in your terminal     |" -ForegroundColor Cyan
 Write-Host " |   runs on your machine. nothing phones home |" -ForegroundColor DarkGray
 Write-Host " +---------------------------------------------+" -ForegroundColor Cyan
 
@@ -184,10 +184,10 @@ Write-Host ""
 Write-Host " +---------------------------------------------+" -ForegroundColor Green
 Write-Host " |   All set.                                  |" -ForegroundColor Green
 Write-Host " |                                             |" -ForegroundColor Green
-Write-Host " |     uv run agent menu   <- start here       |" -ForegroundColor Green
-Write-Host " |     uv run agent chat   <- straight to chat |" -ForegroundColor Green
+Write-Host " |     uv run lantern menu   <- start here       |" -ForegroundColor Green
+Write-Host " |     uv run lantern chat   <- straight to chat |" -ForegroundColor Green
 Write-Host " +---------------------------------------------+" -ForegroundColor Green
 Write-Host ""
 Write-Host "   Tip: end a chat message with /web to search the internet," -ForegroundColor DarkGray
-Write-Host '         or run  uv run agent code "build a CLI tool with tests"' -ForegroundColor DarkGray
+Write-Host '         or run  uv run lantern code "build a CLI tool with tests"' -ForegroundColor DarkGray
 Write-Host ""

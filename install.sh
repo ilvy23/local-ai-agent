@@ -46,7 +46,7 @@ cd "$(cd "$(dirname "$0")" && pwd)"
 
 printf '\n'
 printf '%s ╭─────────────────────────────────────────────╮%s\n' "$C" "$N"
-printf '%s │%s   %sagent%s — a local AI in your terminal       %s│%s\n' "$C" "$N" "$B" "$N" "$C" "$N"
+printf '%s │%s   %slantern%s — a local AI in your terminal     %s│%s\n' "$C" "$N" "$B" "$N" "$C" "$N"
 printf '%s │%s   %sruns on your machine. nothing phones home%s %s│%s\n' "$C" "$N" "$D" "$N" "$C" "$N"
 printf '%s ╰─────────────────────────────────────────────╯%s\n' "$C" "$N"
 
@@ -172,8 +172,8 @@ printf '\n'
 printf '%s ╭─────────────────────────────────────────────╮%s\n' "$G" "$N"
 printf '%s │%s   %sAll set.%s                                  %s│%s\n' "$G" "$N" "$B" "$N" "$G" "$N"
 printf '%s │%s                                             %s│%s\n' "$G" "$N" "$G" "$N"
-printf '%s │%s     %suv run agent menu%s  %s← start here%s         %s│%s\n' "$G" "$N" "$C" "$N" "$D" "$N" "$G" "$N"
-printf '%s │%s     %suv run agent chat%s  %s← straight to a chat%s %s│%s\n' "$G" "$N" "$C" "$N" "$D" "$N" "$G" "$N"
+printf '%s │%s     %suv run lantern menu%s  %s← start here%s         %s│%s\n' "$G" "$N" "$C" "$N" "$D" "$N" "$G" "$N"
+printf '%s │%s     %suv run lantern chat%s  %s← straight to a chat%s %s│%s\n' "$G" "$N" "$C" "$N" "$D" "$N" "$G" "$N"
 printf '%s ╰─────────────────────────────────────────────╯%s\n' "$G" "$N"
 printf '\n   %sTip:%s end any chat message with %s/web%s to search the internet,\n' "$D" "$N" "$C" "$N"
-printf '        or run %suv run agent code "build a CLI tool with tests"%s\n\n' "$C" "$N"
+printf '        or run %suv run lantern code "build a CLI tool with tests"%s\n\n' "$C" "$N"

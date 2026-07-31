@@ -16,7 +16,8 @@ dependencies = [
 ]
 
 [project.scripts]
-agent = "agent.main:app"
+lantern = "agent.main:app"
+agent = "agent.main:app"   # alias, for anyone used to the old name
 
 [build-system]
 requires = ["uv_build>=0.11.26,<0.12.0"]
