@@ -394,7 +394,24 @@ if [ "$TERMUX" = 1 ]; then
     fi
     exit 0
   fi
-  info "Get install-termux.sh from the project page (see docs/TERMUX.md), then run: sh install-termux.sh"
+  # `curl ... | sh`: there is no checkout next to this script. The Termux installer runs Nightage straight from a folder,
+  # so fetch the project archive first (plain HTTPS archive, no git needed) and continue from there.
+  for need in curl tar; do have "$need" || die "Termux needs '$need': run  pkg install curl tar  and start this installer again."; done
+  TSRC="$HOME/.local/share/nightage/src"
+  TREPO="${REPO:-$REPO_URL}"
+  info "The Termux installer runs Nightage directly from a folder, so it first needs the project files."
+  info "Source: $TREPO/archive/HEAD.tar.gz   Target: $TSRC   (a small archive, about 1-2 MB; no git needed)"
+  if ask "Download them and continue with the Termux installer?" y; then
+    run mkdir -p "$TSRC"
+    run sh -c "curl --proto '=https' --tlsv1.2 -fLsS '$TREPO/archive/HEAD.tar.gz' | tar -xz --strip-components=1 -C '$TSRC'" \
+      || die "The download failed. Check your internet connection and start this installer again."
+    set --
+    [ "$YES" = 1 ] && set -- --yes
+    [ "$DRY" = 1 ] && set -- "$@" --dry-run
+    run sh "$TSRC/install-termux.sh" "$@"
+    exit $?
+  fi
+  info "Skipped. Start this installer again whenever you like, or see docs/TERMUX.md."
   exit 0
 fi
 case "$OS" in Linux|Darwin) ;; *) die "Unsupported system '$OS'. On Windows use install.ps1 (see docs/INSTALL.md)." ;; esac

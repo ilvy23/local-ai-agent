@@ -349,3 +349,15 @@ def test_installer_embed_table_matches_the_catalogue():
     ps = PS1.read_text()
     ps_rows = re.findall(r'@\((\d), "([^"]+)", (\d+), "', ps)
     assert [(t, int(mb)) for _n, t, mb in ps_rows] == [(t, int(mb)) for _n, t, mb, _l in rows]
+
+
+@posix
+def test_termux_curl_pipe_fetches_the_project_archive_and_continues_with_the_termux_installer(tmp_path):
+    """On a phone `curl ... | sh` has no checkout next to the script: it must fetch the archive and hand over, not stop."""
+    env = dict(os.environ, TERMUX_VERSION="0.118", HOME=str(tmp_path))
+    res = subprocess.run(["sh", "-s", "--", "--dry-run", "--yes"], input=SH.read_text(), capture_output=True, text=True, env=env, timeout=60)
+    out = re.sub(r"\x1b\[[0-9;]*m", "", res.stdout)
+    assert res.returncode == 0, out
+    assert "/archive/HEAD.tar.gz" in out and "tar -xz --strip-components=1" in out
+    assert "install-termux.sh --yes --dry-run" in out
+    assert "Get install-termux.sh from the project page" not in out
