@@ -42,7 +42,7 @@ Statuses: `ok`, `warn`, `fail`, `info` (a note), `skip` (with the reason: other 
 | ollama | `ollama`, `remote_latency`, `ollama.host` (local/remote, plain http on public address), `ollama.binary`, `ollama.version`, `ollama.vulkan` (second server :11436 when configured), `ollama.loaded` (GPU/CPU split) | all |
 | models | `models` (chat / coding / embed installed? exact `ollama pull`), `context`, `models.installed`, `models.fit` (will it fit VRAM/RAM), `models.capabilities` (tool support from `ollama show`) | all |
 | gpu | `gpu`, `gpu.nvidia` (driver, CUDA, VRAM), `gpu.amd` (amdgpu, ROCm, /dev/kfd access), `gpu.intel`, `gpu.vulkan` (vulkaninfo, software renderer), `gpu.metal` | per vendor / OS |
-| memory | `memory.ram`, `memory.swap`, `memory.pressure`, `memory.headroom` (RAM left after the chat model) | all / linux |
+| memory | `memory.ram`, `memory.swap`, `memory.pressure`, `memory.headroom` (RAM left after the chat model), `memory.roundtrip` (saves and recalls a fact in a throwaway database; by meaning when the memory model works, else by keyword, with the exact reason) | all / linux |
 | disk | `disk.data`, `disk.models` | all |
 | network | `web`, `network.dns`, `network.https`, `network.proxy` | all (`--no-web` skips) |
 | ports | `ports.ollama` (11434), `ports.vulkan` (11436), `ports.web` (8420) | all |

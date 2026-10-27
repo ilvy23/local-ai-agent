@@ -92,3 +92,25 @@ def headroom(ctx: Context):
                     "Use a smaller chat model (models.chat) or free memory.") if left < 0 else warn(
             f"{name} leaves only {_gb(left)} of RAM free", "Tight: expect swapping when other programs run.")
     return ok(f"{_gb(left)} of RAM left after loading {name} (about {_gb(in_ram)})")
+
+
+@check("memory.roundtrip", "memory", "Saving and recalling a fact", timeout=40)
+def roundtrip(ctx: Context):
+    """Writes one fact to a throwaway database and recalls it with the configured memory model when it is reachable
+    (by meaning), else by keyword. Says exactly why when the meaning path is off. Reads and writes none of your data."""
+    from agent.memory.check import roundtrip as run
+
+    model = (ctx.section("models").get("embed") or "").strip()
+    oll = ctx.ollama
+    if not model:
+        res = run(ctx.config, None, unavailable="not configured (models.embed)")
+    elif not oll.reachable:
+        res = run(ctx.config, None, unavailable="not reachable because Ollama is not running")
+    elif not model_installed(model, oll.models):
+        res = run(ctx.config, None, unavailable="not installed (`ollama pull %s`, or choose another with `nightage embed list`)" % model)
+    else:
+        res = run(ctx.config, lambda texts: ctx.p.ollama_embed_vectors(model, texts))
+    r = ok(res.detail) if res.status == "ok" else fail(res.detail) if res.status == "fail" else warn(res.detail)
+    if res.status == "warn":
+        r.hint = "Memory still works through keywords. `nightage embed list` shows memory models; `nightage memory check` repeats this test."
+    return r

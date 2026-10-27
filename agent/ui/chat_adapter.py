@@ -150,6 +150,7 @@ class ChatState:
     tool_exchanges: list[tuple] = field(default_factory=list)
     title_pending: bool = True
     compact: CompactFlag = field(default_factory=CompactFlag)
+    distiller: Any = None            # agent.memory.queue.BackgroundDistiller: saves facts while the chat is idle
 
     @classmethod
     def from_repl_args(

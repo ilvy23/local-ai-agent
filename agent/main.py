@@ -29,6 +29,9 @@ app.add_typer(memory_app, name="memory")
 prompt_app = typer.Typer(add_completion=False, help="Improve or anonymise a prompt, locally.")
 app.add_typer(prompt_app, name="prompt")
 app.add_typer(wa_app, name="wa")
+from agent.embed_cli import embed_app  # noqa: E402
+
+app.add_typer(embed_app, name="embed")
 
 # Optional command groups of the private edition. Absent files (the public export) simply mean no such commands.
 try:
@@ -499,6 +502,49 @@ def memory_search(query: str) -> None:
     for fact in facts:
         table.add_row(str(fact["id"]), fact["content"])
     console.print(table)
+
+
+@memory_app.command("check")
+def memory_check() -> None:
+    """Test that saving and recalling a fact works here (uses a throwaway database, never your own data)."""
+    from agent.memory.check import roundtrip
+
+    console = Console()
+    config = load_config()
+    client = _open_llm()
+    model = config["models"]["embed"]
+    try:
+        client.embed(["probe"], model=model)
+        res = roundtrip(config, lambda texts: client.embed(texts, model=model))
+    except Exception as exc:  # noqa: BLE001 - the reason is what the user needs
+        res = roundtrip(config, None, unavailable=f"not usable ({type(exc).__name__}: {exc})")
+    colour = {"ok": "green", "warn": "yellow", "fail": "red"}[res.status]
+    console.print(f"[{colour}]{res.status}[/{colour}]  {res.detail}")
+    if res.status != "ok":
+        console.print(f"[dim]Memory models and their sizes: {brand.CMD} embed list[/dim]")
+    raise typer.Exit(0 if res.status != "fail" else 1)
+
+
+@memory_app.command("process")
+def memory_process(
+    seconds: float = typer.Option(0.0, "--seconds", help="Stop after about this long (0 = work through everything)."),
+) -> None:
+    """Finish saving facts from messages and tool results that are still queued (what chats leave when you quit)."""
+    from agent.memory import queue
+
+    console = Console()
+    config = load_config()
+    with _open_store(config) as store:
+        before = queue.pending_count(store.conn)
+        db_path = store.db_path
+    if not before:
+        console.print("Nothing is waiting to be remembered.")
+        return
+    console.print(f"[dim]{before} item(s) waiting; saving facts (Ctrl-C is safe: nothing is lost)...[/dim]")
+    queue.drain(db_path, _open_llm(), config, max_seconds=seconds or None)
+    with _open_store(config) as store:
+        left = queue.pending_count(store.conn)
+    console.print(f"[green]Done.[/green] {before - left} handled, {left} left." if left else "[green]Done.[/green] Everything is remembered.")
 
 
 @memory_app.command("forget")

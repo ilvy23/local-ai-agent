@@ -53,7 +53,7 @@ def clear_session(session_id: int, store=Depends(get_store)) -> SessionOut:
     (search for "/clear") - tool_exchanges is empty here since the web
     route doesn't yet track per-turn tool exchanges across a session the
     way the CLI loop does; the end-of-session personal-fact distillation
-    still runs, only the "learned via a tool this session" pass is skipped.
+    is queued and saved in the background, only the "learned via a tool this session" pass is skipped.
     """
     from agent.tui import _distill_on_exit
     from agent.web.console_shim import WebConsole
@@ -62,6 +62,9 @@ def clear_session(session_id: int, store=Depends(get_store)) -> SessionOut:
     config = get_config()
     vectors = VectorIndex(store)
     _distill_on_exit(store, vectors, client, config, session_id, WebConsole(), [])
+    from agent.memory.queue import kick_drain
+
+    kick_drain(store.db_path, client, config)         # facts are saved in the background, the request does not wait
     new_id = store.create_session()
     return SessionOut(id=new_id, title=None, started_at=None, message_count=0)
 

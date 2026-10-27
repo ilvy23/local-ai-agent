@@ -315,6 +315,29 @@ def _create_v15_schema(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE file_shares ADD COLUMN {col} TEXT")
 
 
+def _create_v16_schema(conn: sqlite3.Connection) -> None:
+    """Durable fact-extraction queue (agent/memory/queue.py).
+
+    `distill_progress` holds, per session, the id of the last user message already handed to the fact extractor: the
+    queue IS "user messages above that id". Saving facts and moving the mark happen in one transaction, so a crash
+    loses nothing and never saves a fact twice. `learn_queue` holds tool exchanges waiting for the learned-fact check.
+    Sessions that already exist are marked as fully processed (the old end-of-chat distiller handled them)."""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS distill_progress ("
+        "session_id INTEGER PRIMARY KEY, last_message_id INTEGER NOT NULL DEFAULT 0, updated_at TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS learn_queue ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER, question TEXT NOT NULL, reply TEXT NOT NULL, "
+        "evidence TEXT, created_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0)"
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO distill_progress (session_id, last_message_id, updated_at) "
+        "SELECT session_id, MAX(id), ? FROM messages GROUP BY session_id",
+        (_utcnow(),),
+    )
+
+
 # Ordered list of (target_version, migration) steps. Each step runs only when
 # the database's current `user_version` is below its target version. Append
 # new (version, callable) entries here for future schema changes; never
@@ -335,6 +358,7 @@ _MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [
     (13, _create_v13_schema),
     (14, _create_v14_schema),
     (15, _create_v15_schema),
+    (16, _create_v16_schema),
 ]
 
 # Guard against an out-of-order or duplicated append, which would make _migrate
@@ -424,6 +448,7 @@ class Store:
         source_session_id: int | None,
         kind: str = "personal",
         confidence: str = "verified",
+        commit: bool = True,
     ) -> int:
         """`kind="personal"` (the default) for something explicitly asked to
         be remembered, or genuinely about the user - always shown to the
@@ -444,7 +469,8 @@ class Store:
             "VALUES (?, ?, ?, ?, ?, ?)",
             (content, source_session_id, now, now, kind, confidence),
         )
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
         return cursor.lastrowid
 
     def get_active_facts(self, kind: str | None = None) -> list[dict]:

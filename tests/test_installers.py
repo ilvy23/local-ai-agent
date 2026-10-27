@@ -271,7 +271,7 @@ def test_ps1_downloads_are_https_only_and_admin_is_refused():
 
 def test_ps1_has_the_same_flags_as_the_shell_script():
     text = PS1.read_text()
-    for flag in ("Yes", "DryRun", "NoOllama", "NoModel", "Source", "Uninstall", "Help", "Force", "Model", "WithOllama"):
+    for flag in ("Yes", "DryRun", "NoOllama", "NoModel", "Source", "Uninstall", "Help", "Force", "Model", "WithOllama", "Embed", "NoEmbed"):
         assert re.search(rf"\${flag}\b", text), flag
     assert "[Environment]::GetEnvironmentVariable" in text                # user-scope PATH, never Machine writes
     assert "SetEnvironmentVariable" not in text
@@ -297,3 +297,55 @@ def test_ps1_parses_and_dry_runs_under_pwsh(tmp_path):
     for needle in ("[7/7]", "https://astral.sh/uv/install.ps1", "uv tool install --force --python 3.12", "doctor --no-web", "DRY RUN"):
         assert needle in res.stdout, needle
     assert not (home / "AppData").exists()
+
+
+# ── the memory (embedding) model choice ─────────────────────────────────────
+
+def _embed_plan(tmp_path: Path, ram: str, lang: str, *args: str) -> str:
+    d = tmp_path / f"e{ram}{lang}{'-'.join(args)}".replace("/", "_")
+    d.mkdir()
+    return _run_sh(d, "-n", "-y", "--source", str(ROOT), *args, extra_env={"NIGHTAGE_TEST_RAM_MB": ram, "LC_ALL": lang}).stdout
+
+
+@posix
+@pytest.mark.parametrize("ram,lang,tag", [
+    ("2000", "C", "all-minilm"),
+    ("7000", "en_US.UTF-8", "nomic-embed-text"),
+    ("7000", "de_DE.UTF-8", "embeddinggemma:300m-qat-q4_0"),
+    ("32000", "de_DE.UTF-8", "bge-m3"),
+    ("32000", "en_GB.UTF-8", "nomic-embed-text"),
+])
+def test_embed_choice_default_follows_ram_and_language_like_the_catalogue(tmp_path, ram, lang, tag):
+    from agent import embedmodels
+
+    assert embedmodels.recommend(int(ram), 0, lang).tag == tag          # the python rule and the installer agree
+    out = _embed_plan(tmp_path, ram, lang)
+    assert f"Which memory model? [auto: {tag}]" in out
+    assert f"embed use {tag} --yes --no-pull" in out
+    assert re.search(rf"\d\) {re.escape(tag)}\s.*<- recommended for this computer", out)
+    for n in ("0) none", "English only - smallest, fastest", "Multilingual"):
+        assert n in out
+
+
+@posix
+def test_embed_flags(tmp_path):
+    assert "embed use all-minilm --yes" in _embed_plan(tmp_path, "7000", "C", "--embed", "all-minilm")
+    out = _embed_plan(tmp_path, "7000", "C", "--no-embed")
+    assert "Skipped (--no-embed)" in out and "embed use" not in out and "Which memory model" not in out
+
+
+@posix
+def test_installer_embed_table_matches_the_catalogue():
+    from agent import embedmodels
+
+    text = SH.read_text()
+    rows = re.findall(r"^(?:EMB_TABLE=')?(\d)\|([^|]+)\|(\d+)\|(.+?)'?$", text, re.M)
+    assert len(rows) == 5
+    for _n, tag, mb, label in rows:
+        m = embedmodels.describe(tag)
+        assert m.exact and m.curated, tag
+        assert int(mb) == m.download_mb, tag
+        assert label.split(" - ")[0].split(" (")[0] == m.label.split(" - ")[0].split(" (")[0], tag    # English only / Multilingual
+    ps = PS1.read_text()
+    ps_rows = re.findall(r'@\((\d), "([^"]+)", (\d+), "', ps)
+    assert [(t, int(mb)) for _n, t, mb in ps_rows] == [(t, int(mb)) for _n, t, mb, _l in rows]

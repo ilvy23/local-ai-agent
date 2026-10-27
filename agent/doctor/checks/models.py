@@ -34,7 +34,12 @@ def configured(ctx: Context):
         elif not oll.reachable:
             out.append(Result("skip", f"{name} (cannot verify: Ollama is not running)", "Start Ollama, then run the doctor again.", id=cid, title=title))
         elif model_installed(name, oll.models):
-            out.append(Result("ok", name, id=cid, title=title))
+            detail = name
+            if key == "embed":
+                from agent import embedmodels
+
+                detail = f"{name} ({embedmodels.describe(name).label})"
+            out.append(Result("ok", detail, id=cid, title=title))
         else:
             sev = "warn" if key == "coding" else "fail"
             out.append(Result(sev, f"{name} is not installed", f"Run `ollama pull {name}`.", id=cid, title=title, **_pull_fix(name)))
@@ -81,6 +86,28 @@ def fit_verdict(size: int, gpus: list, ram_free_mb: int, ram_total_mb: int) -> t
     return "fail", f"needs about {need_mb / 1024:.1f} GB, more than this machine has ({max(ram_total_mb, vram_total) / 1024:.1f} GB)"
 
 
+def _embed_advice(name: str, st: str, text: str, hint: str, si) -> tuple[str, str, str]:
+    """The memory model runs on the CPU: say what it is for, warn when it is big next to the free RAM, point at the
+    recommended one (agent/embedmodels.py; `nightage embed list` shows all)."""
+    import os
+
+    from agent import embedmodels
+
+    cur = embedmodels.describe(name)
+    text = f"{text}; {cur.label}"
+    big = embedmodels.warn_if_large(cur, si.ram_free_mb, si.ram_total_mb)
+    rec = embedmodels.recommend(si.ram_total_mb, None, os.environ.get("LC_ALL") or os.environ.get("LANG"))
+    same = embedmodels._canon(rec.tag) == embedmodels._canon(name)
+    if big:
+        st = "warn" if st in ("ok", "info") else st
+        text = f"{text}. {big}"
+    if (big or st in ("warn", "fail")) and not same:
+        hint = f"Recommended for this computer: {rec.tag} ({rec.label}). Switch with `{brand.CMD} embed use {rec.tag}`; the memory index is rebuilt."
+    elif not same and cur.multilingual and not rec.multilingual and cur.ram_mb and cur.ram_mb > 4 * (rec.ram_mb or 1):
+        hint = f"If you only chat in English, {rec.tag} ({rec.label}) uses far less memory: `{brand.CMD} embed use {rec.tag}`."
+    return st, text, hint
+
+
 @check("models.fit", "models", "Will the models fit?", needs_ollama=True)
 def fit(ctx: Context):
     from agent.doctor.checks.ollama import is_remote
@@ -105,6 +132,8 @@ def fit(ctx: Context):
         hint = ""
         if st in ("warn", "fail"):
             hint = "Pick a smaller model (`nightage doctor --deep` lists a recommendation) or free memory."
+        if key == "embed":
+            st, text, hint = _embed_advice(name, st, text, hint, si)
         out.append(Result(st, f"{name}: {text}", hint, id=f"models.fit.{key}", title=f"{title} fit"))
     return out or skip("no installed model with a known size")
 

@@ -90,6 +90,20 @@ class FakeProbes(Probes):
     def vulkan_server(self): return {"url": "http://127.0.0.1:11436", "reachable": False, "version": ""}
     def ollama_generate(self, model, prompt, timeout=90.0): return self._gen or {"error": "", "ttft_ms": 800.0, "tokens": 40, "tps": 12.5, "load_ms": 100.0}
     def ollama_embed(self, model, text="hello", timeout=60.0): return self._embed or {"dim": 1024, "ms": 50.0, "error": ""}
+    def ollama_embed_vectors(self, model, texts, timeout=30.0):
+        if self._embed.get("error"):
+            raise RuntimeError(self._embed["error"])
+        import hashlib
+        import math
+        out = []
+        for t in texts:
+            v = [0.0] * 32
+            for w in "".join(c if c.isalpha() else " " for c in t.lower()).split():
+                if w not in {"what", "is", "my", "has", "a", "in"}:
+                    v[int(hashlib.md5(w.encode()).hexdigest(), 16) % 32] += 1.0
+            n = math.sqrt(sum(x * x for x in v)) or 1.0
+            out.append([x / n for x in v])
+        return out
     def ollama_tool_call(self, model, timeout=90.0): return self._tool or {"called": True, "name": "get_weather", "args_ok": True, "ms": 900.0}
 
 

@@ -83,8 +83,15 @@ class ChatController:
         if not resumed and self._hold_for_access_level(prompt):
             return
         approve_fn = approve.as_chat_approve() if hasattr(approve, "as_chat_approve") else approve
-        # thinking text is captured so /thinking show works; it lives in memory only and is never stored
-        run_chat_turn(self.state, prompt, emit, stop, approve_fn, suppress_print=True, capture_thinking=True)
+        dist = getattr(self.state, "distiller", None)
+        if dist is not None:
+            dist.busy(True)                      # no background fact extraction while the chat model works
+        try:
+            # thinking text is captured so /thinking show works; it lives in memory only and is never stored
+            run_chat_turn(self.state, prompt, emit, stop, approve_fn, suppress_print=True, capture_thinking=True)
+        finally:
+            if dist is not None:
+                dist.busy(False)
 
     def _hold_for_access_level(self, prompt: str) -> bool:
         """Classic loop: 'work in this repo: <path>' on a folder with no grant asks for a level first."""

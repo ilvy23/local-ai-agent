@@ -63,10 +63,14 @@ EDITABLE: dict[str, dict[str, Any]] = {
     },
     "embed_model": {
         "path": "models.embed", "kind": "model", "category": "Models",
-        "help": "Turns text into vectors for semantic memory search. "
-                "Changing this here does NOT rebuild the index - use the "
-                "'Re-embed memory' option instead so old memories stay "
-                "searchable.",
+        "help": "The memory model: turns text into vectors so a question finds what it MEANS. "
+                "bge-m3 = multilingual, better for German or French chats (1.2 GB); "
+                "all-minilm = English only, smallest and fastest (46 MB); "
+                "nomic-embed-text = English only, small (274 MB); "
+                "embeddinggemma:300m-qat-q4_0 = multilingual, small (239 MB). "
+                f"It runs on the CPU. See all choices with `{brand.CMD} embed list`. "
+                f"Changing it here does NOT rebuild the index - use `{brand.CMD} embed use <model>` "
+                "instead so old memories stay searchable.",
     },
     "weekly_model": {
         "path": "models.weekly", "kind": "model", "category": "Models", "private": True,

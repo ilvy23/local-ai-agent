@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from dataclasses import dataclass, field
 from typing import Any
 
 from agent.jsonx import extract_json_value
@@ -232,51 +233,57 @@ def _extract_facts_with_confidence(
     return result if result else []
 
 
-def distill_session(
-    store: Store,
-    vectors: VectorIndex,
-    llm: Any,
-    config: dict[str, Any],
-    session_id: int,
-) -> list[str]:
-    """Extract, dedupe, store, and embed new facts. Returns the fact texts added."""
-    history = store.get_messages(session_id)
-    user_messages = [m for m in history if m["role"] == "user"]
-    if len(user_messages) < MIN_USER_MESSAGES:
-        return []
+@dataclass
+class PlannedFact:
+    """A candidate that passed every check and only waits to be written."""
 
-    # ONLY the user's own words. Feeding assistant replies and tool results (file
-    # listings, web page text, command output) is what filled memory with file
-    # paths and book plots — the model "extracted" them as facts.
-    transcript = "\n".join(m["content"] for m in user_messages)
+    text: str
+    confidence: str
+    embedding: list[float] | None
+    supersedes: list[int] = field(default_factory=list)
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def extract_candidates(llm: Any, config: dict[str, Any], texts: list[str]) -> list[dict[str, str]] | None:
+    """One background-model call over the user's own words. None = the reply held no parseable JSON array."""
     reply = "".join(
         llm.chat(
             messages=[
                 {"role": "system", "content": _PROMPT},
-                {"role": "user", "content": transcript},
+                {"role": "user", "content": "\n".join(texts)},
             ],
             model=config["models"]["background"],
             stream=False,
             background=True,
         )
     )
+    return _extract_facts_with_confidence(reply)
 
-    candidates = _extract_facts_with_confidence(reply)
-    if candidates is None:
-        logger.warning("Fact extraction returned no parseable JSON array; skipping.")
-        return []
 
+def plan_facts(
+    store: Store, vectors: VectorIndex, llm: Any, config: dict[str, Any], candidates: list[dict[str, str]]
+) -> list[PlannedFact]:
+    """Apply the quality gates (junk filter, exact / near-identical duplicates, overlap judge) WITHOUT writing
+    anything, so the slow part (embedding, judge calls) never holds a database write lock."""
     existing = {f["content"] for f in store.get_active_facts()}
-    added: list[str] = []
+    planned: list[PlannedFact] = []
     for item in candidates:
         fact = item["text"]
-        confidence = item["confidence"]
         if fact in existing or JUNK_FACT_RE.search(fact):
             continue
         embedding = embed_with_retry(llm, fact, config["models"]["embed"])
 
         supersedes: list[int] = []
         if embedding is not None:
+            if any(p.embedding is not None and len(p.embedding) == len(embedding)
+                   and _cosine(embedding, p.embedding) > DEDUPE_SIMILARITY for p in planned):
+                continue                      # a paraphrase of a fact planned a moment ago in this same batch
             neighbours = vectors.similar(embedding, "fact", k=3, min_similarity=OVERLAP_MIN_SIMILARITY)
             if neighbours and neighbours[0][2] > DEDUPE_SIMILARITY:
                 continue
@@ -290,14 +297,53 @@ def distill_session(
                     supersedes.append(old_id)
             if skip:
                 continue
-            for old_id in supersedes:
-                store.deactivate_fact(old_id)       # the new fact replaces the one it contradicts
-
-        fact_id = store.add_fact(fact, source_session_id=session_id, confidence=confidence)
-        if embedding is not None:
-            vectors.add("fact", fact_id, fact, embedding)
+        planned.append(PlannedFact(fact, item["confidence"], embedding, supersedes))
         existing.add(fact)
-        added.append(fact)
+    return planned
+
+
+def index_fact(vectors: VectorIndex, fact_id: int, p: PlannedFact) -> None:
+    """Add the vector of a stored fact. A dimension mismatch (embedder changed without `reembed`) leaves the fact
+    stored but unsearchable by meaning; it never raises."""
+    if p.embedding is None:
+        return
+    try:
+        vectors.add("fact", fact_id, p.text, p.embedding)
+    except Exception as exc:  # noqa: BLE001 - the fact is saved; indexing can be repaired later
+        logger.warning("Fact %s saved but not indexed: %s", fact_id, exc)
+
+
+def distill_session(
+    store: Store,
+    vectors: VectorIndex,
+    llm: Any,
+    config: dict[str, Any],
+    session_id: int,
+) -> list[str]:
+    """Extract, dedupe, store, and embed new facts. Returns the fact texts added.
+
+    The whole-session, synchronous path (CLI tools, tests). Chats no longer call it at exit: facts are saved while
+    chatting by agent.memory.queue, which uses the same extraction and gates."""
+    history = store.get_messages(session_id)
+    user_messages = [m for m in history if m["role"] == "user"]
+    if len(user_messages) < MIN_USER_MESSAGES:
+        return []
+
+    # ONLY the user's own words. Feeding assistant replies and tool results (file
+    # listings, web page text, command output) is what filled memory with file
+    # paths and book plots — the model "extracted" them as facts.
+    candidates = extract_candidates(llm, config, [m["content"] for m in user_messages])
+    if candidates is None:
+        logger.warning("Fact extraction returned no parseable JSON array; skipping.")
+        return []
+
+    added: list[str] = []
+    for p in plan_facts(store, vectors, llm, config, candidates):
+        for old_id in p.supersedes:
+            store.deactivate_fact(old_id)       # the new fact replaces the one it contradicts
+        fact_id = store.add_fact(p.text, source_session_id=session_id, confidence=p.confidence)
+        index_fact(vectors, fact_id, p)
+        added.append(p.text)
 
     # Catch up anything a previous run stored but couldn't embed — otherwise the
     # agent keeps facts it can never recall.

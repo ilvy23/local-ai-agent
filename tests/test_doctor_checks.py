@@ -415,3 +415,29 @@ def test_plugins_manifest_check_reports_problems(tmp_path, monkeypatch):
     core.discover()
     res = core.run_checks(ctx_for(tmp_path), [core.REGISTRY["plugins.manifest"]])
     assert any(r.id == "plugins.quiet-plug" and r.status in ("ok", "warn") for r in res)
+
+
+def test_embed_rows_show_the_label_and_warn_when_large_for_the_free_ram(tmp_path):
+    res = {r.id: r for r in one("models", tmp_path, ollama=UP)}
+    assert "Multilingual" in res["model_embed"].detail and res["model_embed"].detail.startswith("bge-m3")
+    small = sysinfo.SysInfo(ram_total_mb=4096, ram_free_mb=1500, cpu_count=4, os_family="linux", distro="debian", init_system="systemd")
+    fit = {r.id: r for r in one("models.fit", tmp_path, ollama=UP, si=small)}
+    row = fit["models.fit.embed"]
+    assert row.status == "warn" and "bge-m3 needs about" in row.detail
+    assert "embed use" in row.hint
+    roomy = {r.id: r for r in one("models.fit", tmp_path, ollama=UP, gpus=[G(total_mb=24576)])}
+    assert roomy["models.fit.embed"].status in ("ok", "info")
+
+
+def test_memory_roundtrip_by_meaning_by_keyword_and_with_a_broken_embedder(tmp_path):
+    cfg = {"models": {"chat": "qwen3.5:9b", "embed": "bge-m3"}, "memory": {"recall_k": 6, "recall_min_similarity": 0.2}}
+    good = one("memory.roundtrip", tmp_path, cfg, ollama=UP)
+    assert good.status == "ok" and "recalled by meaning with bge-m3" in good.detail
+    down = one("memory.roundtrip", tmp_path, cfg)
+    assert down.status == "warn" and "Ollama is not running" in down.detail and "by keyword" in down.detail
+    missing = type(UP)(True, "1", {"qwen3.5:9b": 1}, url="http://localhost:11434")
+    assert "not installed" in one("memory.roundtrip", tmp_path, cfg, ollama=missing).detail
+    broken = one("memory.roundtrip", tmp_path, cfg, ollama=UP, embed={"error": "Ollama answered 500"})
+    assert broken.status == "warn" and "Ollama answered 500" in broken.detail
+    strict = {**cfg, "memory": {"recall_k": 6, "recall_min_similarity": 0.99}}
+    assert "recall_min_similarity" in one("memory.roundtrip", tmp_path, strict, ollama=UP).detail

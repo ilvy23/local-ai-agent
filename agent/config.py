@@ -124,6 +124,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # 0 = always show the k nearest, relevant or not.
         "recall_min_similarity": 0.55,
         "context_char_budget": 24000,
+        # Facts are saved WHILE you chat (agent/memory/queue.py), never at exit. A turn's messages are taken once this
+        # many user messages are waiting and the chat model is idle; `models.background` does the extraction.
+        "distill_every_turns": 1,
+        "distill_batch_messages": 8,
+        # Quitting waits at most this long for an extraction that is already running; the rest is finished at the next
+        # start (or by `nightage memory process`). Quitting never starts a model call.
+        "exit_wait_seconds": 3.0,
     },
     "tools": {
         "max_iterations": 60,

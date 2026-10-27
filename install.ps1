@@ -29,6 +29,8 @@
 .PARAMETER NoOllama   Do not touch Ollama (use this if it runs on another machine).
 .PARAMETER NoModel    Do not offer a model download.
 .PARAMETER Model      Use this Ollama model instead of the recommended one.
+.PARAMETER Embed      Use this memory (embedding) model, e.g. all-minilm; without it you choose from a short list.
+.PARAMETER NoEmbed    Do not offer a memory model (Nightage then recalls by keywords only).
 .PARAMETER WithOllama Say yes to installing Ollama.
 .PARAMETER Source     Install from this folder, https:// archive URL (.tar.gz / .zip) or git+https URL.
 .PARAMETER Uninstall  Remove Nightage (asks before touching your data).
@@ -42,12 +44,14 @@ param(
     [switch]$DryRun,
     [switch]$NoOllama,
     [switch]$NoModel,
+    [switch]$NoEmbed,
     [switch]$WithOllama,
     [switch]$Force,
     [switch]$Uninstall,
     [switch]$Help,
     [string]$Source = "",
-    [string]$Model = ""
+    [string]$Model = "",
+    [string]$Embed = ""
 )
 
 Set-StrictMode -Version Latest
@@ -511,6 +515,64 @@ if ($ollamaReady -and -not $DryRun) {
     }
 }
 
+# ---------------------------------------------------------------- memory (embedding) models
+# MIRRORS agent/embedmodels.py (tests/test_installers.py checks that tags and sizes agree). Number, tag, download MB, who it is for.
+$EmbTable = @(
+    @(1, "all-minilm", 46, "English only - smallest, fastest"),
+    @(2, "nomic-embed-text", 274, "English only - small, good all-rounder"),
+    @(3, "embeddinggemma:300m-qat-q4_0", 239, "Multilingual (100+ languages, e.g. German, French, Spanish) - small"),
+    @(4, "granite-embedding:278m", 563, "Multilingual - mid size"),
+    @(5, "bge-m3", 1200, "Multilingual (100+ languages, e.g. German, French) - best for non-English chats, biggest")
+)
+
+# english | multilingual | unknown, from the Windows display language (the same rule as agent/embedmodels.py language_hint)
+function Get-EmbLang {
+    $name = ""
+    try { $name = (Get-Culture).Name } catch { }
+    if ($env:LC_ALL) { $name = $env:LC_ALL } elseif ($env:LANG) { $name = $env:LANG }
+    if (-not $name -or $name -match '^(C|POSIX)(\.|$)') { return "unknown" }
+    if ($name -match '^en([-_.@]|$)') { return "english" }
+    return "multilingual"
+}
+
+function Select-EmbedModel([int]$RamMb, [string]$Lang) {
+    $small = "embeddinggemma:300m-qat-q4_0"
+    if ($Lang -eq "english") { if ($RamMb -lt 4096) { return "all-minilm" } else { return "nomic-embed-text" } }
+    if ($RamMb -lt 4096) { if ($Lang -eq "unknown") { return "all-minilm" } else { return $small } }
+    if ($Lang -eq "multilingual" -and $RamMb -ge 16384) { return "bge-m3" }
+    return $small
+}
+
+# Returns the chosen tag, or "" for none. A numbered choice; Enter (or -Yes) takes the recommended one.
+function Select-EmbedChoice([int]$RamMb) {
+    $rec = Select-EmbedModel $RamMb (Get-EmbLang)
+    if ($Embed) { Info ("Using the memory model you asked for: " + $Embed); return $Embed }
+    Say "   The memory model lets Nightage recall things by meaning. It runs on the CPU, so a smaller one leaves more memory for the chat model." "DarkGray"
+    foreach ($row in $EmbTable) {
+        $mark = if ($row[1] -eq $rec) { "   <- recommended for this computer" } else { "" }
+        Say ("     {0}) {1,-32} {2,8}   {3}{4}" -f $row[0], $row[1], (Format-Size $row[2]), $row[3], $mark)
+    }
+    Say "     0) none - Nightage still works and searches memory by keywords"
+    if ($Yes -or $DryRun) {
+        $note = if ($DryRun -and -not $Yes) { "dry run: would ask, default" } else { "auto" }
+        Say ("   ? Which memory model? [{0}: {1}]" -f $note, $rec) "Cyan"
+        return $rec
+    }
+    $interactive = $true
+    try { if ([Console]::IsInputRedirected) { $interactive = $false } } catch { }
+    if (-not $interactive) {
+        Stop-Install "There is no terminal to ask you on. Run again with -Yes to accept the defaults, or download the script and run it in a PowerShell window."
+    }
+    $reply = Read-Host "   ? Which memory model? [number, Enter = recommended]"
+    if ($null -eq $reply) { $reply = "" }
+    if ($reply -match '^\s*0' -or $reply -match '^\s*[nN]') { return "" }
+    if ($reply -match '^\s*([1-5])\s*$') {
+        $want = [int]$Matches[1]
+        foreach ($row in $EmbTable) { if ($row[0] -eq $want) { return [string]$row[1] } }
+    }
+    return $rec
+}
+
 # ---- 6. model
 Show-Step "The AI model"
 if ($NoModel) {
@@ -539,12 +601,29 @@ if ($NoModel) {
             }
         }
         # the memory model: recall by meaning instead of by keywords (Nightage works without it)
-        $emb = "bge-m3"
-        if ((-not $DryRun) -and (Test-ModelInstalled $emb)) { Ok ($emb + " (the memory model) is already downloaded") }
-        elseif (Ask-User ("Also download the memory model " + $emb + " (about 1.2 GB)? It lets Nightage recall things by meaning, not just by keywords.") "y") {
-            $code = Invoke-Shown "ollama" @("pull", $emb)
-            if ($code -ne 0) { Warn ("Download failed. Later:  ollama pull " + $emb) }
-        } else { Info ("Skipped. Nightage still works and falls back to keyword search. Later:  ollama pull " + $emb) }
+        if ($NoEmbed) {
+            Info "Skipped (-NoEmbed). Nightage searches memory by keywords. Later:  nightage embed list"
+        } else {
+            $emb = Select-EmbedChoice $ram
+            if (-not $emb) {
+                Info "No memory model. Nightage still works and falls back to keyword search. Later:  nightage embed list"
+            } else {
+                $embSize = 0
+                foreach ($row in $EmbTable) { if ($row[1] -eq $emb) { $embSize = $row[2] } }
+                $sizeText = if ($embSize -gt 0) { " (about " + (Format-Size $embSize) + ")" } else { "" }
+                $embReady = $false
+                if ((-not $DryRun) -and (Test-ModelInstalled $emb)) { Ok ($emb + " (the memory model) is already downloaded"); $embReady = $true }
+                elseif (Ask-User ("Download the memory model " + $emb + $sizeText + "?") "y") {
+                    $code = Invoke-Shown "ollama" @("pull", $emb)
+                    if ($code -ne 0) { Warn ("Download failed. Later:  nightage embed use " + $emb) } else { $embReady = $true }
+                } else { Info ("Skipped. Nightage still works and falls back to keyword search. Later:  nightage embed use " + $emb) }
+                # `embed use` also rebuilds the memory index when the model changes, so an older install never mixes vector sizes
+                if ($embReady -or $DryRun) {
+                    $code = Invoke-Shown $nightageExe @("embed", "use", $emb, "--yes", "--no-pull")
+                    if ($code -ne 0) { Warn ("Could not switch now; run later:  nightage embed use " + $emb) }
+                }
+            }
+        }
     }
 }
 

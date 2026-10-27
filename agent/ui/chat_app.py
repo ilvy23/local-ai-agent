@@ -10,7 +10,8 @@ Same start-up and shut-down semantics as the classic `agent.tui.run_repl` (they 
   run      a `NightageApp` whose turn function is `chat_adapter.run_chat_turn` - messages are persisted by that
            function exactly as the classic loop does (user / tool / assistant rows, title, embeddings), so a session
            can be continued in either UI
-  exit     notes distilled from the session, models unloaded (also on Ctrl-C / crash)
+  run      facts are saved in the background while the model is idle (agent.memory.queue)
+  exit     the memory worker is stopped (nothing waits for a model), models unloaded (also on Ctrl-C / crash)
 
 Tests and embedders can inject `client`, `store` and `console` (then nothing is opened or unloaded by this module
 except what it created itself)."""
@@ -141,6 +142,7 @@ def run_chat_ui(config: dict[str, Any], *, session_id: int | None = None, resume
                 return 1
             quiet = Console(file=io.StringIO(), force_terminal=False, width=100)
             state = tui.setup_chat(client, config, quiet, store, sid)
+            tui.start_memory_worker(state, config)
             app, ctl = build_chat_app(state, config, plain=plain, input=input, output=output, console=console, **app_kwargs)
             _print_start(app, state, quiet, sid, client)
             try:
@@ -191,7 +193,8 @@ def _shutdown(app: Any, state: ChatState, client: Any, config: dict[str, Any], u
     from agent import tui
 
     try:
-        tui._distill_on_exit(state.store, state.vectors, client, config, state.session_id, app.console, state.tool_exchanges)
+        tui._distill_on_exit(state.store, state.vectors, client, config, state.session_id, app.console, state.tool_exchanges,
+                             distiller=state.distiller)
     except Exception:  # noqa: BLE001
         pass
     if unload:

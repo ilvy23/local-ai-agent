@@ -438,6 +438,20 @@ class Probes:
         vec = ((d or {}).get("embeddings") or [[]])[0] if d else []
         return {"dim": len(vec), "ms": (time.perf_counter() - t0) * 1000, "error": "" if vec else "no embedding returned"}
 
+    def ollama_embed_vectors(self, model: str, texts: list[str], timeout: float = 30.0) -> list[list[float]]:
+        """The vectors for `texts` (raises with the reason when the model cannot embed)."""
+        import httpx
+
+        try:
+            with self._client(timeout) as c:
+                r = c.post("/api/embed", json={"model": model, "input": texts, "options": {"num_gpu": 0}})
+                r.raise_for_status()
+                return r.json()["embeddings"]
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(f"Ollama answered {exc.response.status_code}") from None
+        except (httpx.HTTPError, KeyError, ValueError) as exc:
+            raise RuntimeError(type(exc).__name__) from None
+
     def ollama_tool_call(self, model: str, timeout: float = 90.0) -> dict[str, Any]:
         """Ask for a tool call; {'called': bool, 'name', 'args_ok': bool, 'prose': bool, 'ms'}."""
         tool = {"type": "function", "function": {

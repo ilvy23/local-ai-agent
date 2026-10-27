@@ -1367,11 +1367,37 @@ def setup_chat(
 
 
 
+def start_memory_worker(state: "ChatState", config: dict[str, Any]) -> Any:
+    """Start the background fact saver for this chat (see agent.memory.queue): it first catches up on whatever an
+    earlier chat left in the queue, then takes each turn's messages while the model is idle. Returns it (also kept
+    on `state.distiller`), or None when the store has no file to open a second connection on."""
+    from agent.memory.queue import BackgroundDistiller
+
+    db_path = getattr(state.store, "db_path", None)
+    if not db_path:
+        return None
+    try:
+        state.distiller = BackgroundDistiller(config, state.client, db_path, session_id=state.session_id).start()
+    except Exception as exc:  # noqa: BLE001 - remembering must never stop a chat from starting
+        logger.warning("Could not start the memory worker: %s", exc)
+        state.distiller = None
+    return state.distiller
+
+
 def start_fresh_session(state: "ChatState", tool_exchanges: list[tuple]) -> int:
-    """/clear: take notes from the finished session, open a new one and rebind the session-bound tools. Resets the
-    state's per-session fields (title, last reply, goal, plan) and returns the new session id."""
-    _distill_on_exit(state.store, state.vectors, state.client, state.config, state.session_id, state.console, tool_exchanges)
+    """/clear: queue the finished session's notes (the memory worker takes them in the background), open a new
+    session and rebind the session-bound tools. Resets the state's per-session fields (title, last reply, goal,
+    plan) and returns the new session id."""
+    from agent.memory.queue import enqueue_exchanges
+
+    try:
+        enqueue_exchanges(state.store, state.session_id, tool_exchanges)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not queue the session's notes: %s", exc)
     state.session_id = state.store.create_session()
+    if state.distiller is not None:
+        state.distiller.session_id = state.session_id
+        state.distiller.notify()
     state.registry.register(_make_take_note_tool(state.store, state.session_id, state.console))
     from agent.tools.deep_research import make_deep_research_tool
 
@@ -1423,6 +1449,7 @@ def run_repl(
 
     console.print(f"[bold cyan]{persona_name}[/bold cyan] is ready. Type /help for commands.")
     _warn_if_model_cannot_use_tools(console, client, model)
+    memory_worker = start_memory_worker(rt, config)
 
     pending_task: str | None = None  # a "work in this repo: ..." message waiting for an access level
     last_reply: str | None = None  # what a "you were wrong" would be about
@@ -1433,11 +1460,15 @@ def run_repl(
         "original_task": None,
     }
     while True:
+        if memory_worker is not None:
+            memory_worker.busy(False)          # waiting for you: the model is idle, facts get saved now
         try:
             user_input = console.input("[bold green]you>[/bold green] ").strip()
         except (EOFError, KeyboardInterrupt):
             console.print()
             break
+        if memory_worker is not None:
+            memory_worker.busy(True)
 
         if not user_input:
             continue
@@ -1650,7 +1681,7 @@ def run_repl(
             # feels on every tool-using turn, for a save that isn't urgent.
             tool_exchanges.append((user_input, reply, turn_evidence.take()))
 
-    _distill_on_exit(store, vectors, client, config, session_id, console, tool_exchanges)
+    _distill_on_exit(store, vectors, client, config, session_id, console, tool_exchanges, distiller=memory_worker)
 
 
 _FACT_EXTRACT_SYSTEM = (
@@ -1684,6 +1715,7 @@ def _save_learned_facts(
     store: Store,
     vectors: VectorIndex,
     tool_exchanges: list[tuple],
+    strict: bool = False,
 ) -> None:
     """Check each tool-using exchange from the finished session for one durable fact worth remembering, and save any
     found the way `agent memory add` does (store.add_fact() then vectors.add("fact", ...)).
@@ -1722,9 +1754,13 @@ def _save_learned_facts(
 
             if not extracted or extracted.upper() == "NONE" or JUNK_FACT_RE.search(extracted) or _URL_RE.search(extracted):
                 continue
+
             if evidence:
                 origin = ", ".join(dict.fromkeys(s["domain"] for s in evidence["sources"][:3]))
                 extracted += f" (web, {date.today().isoformat()}, {origin})"
+
+            if any(f["content"] == extracted for f in store.get_active_facts()):
+                continue                 # a retried exchange (crash, or queue replay) never saves the same fact twice
 
             # "incidental": this came from a tool call, not from the user asking to remember something or talking
             # about themselves - only worth surfacing when it's actually relevant, not every turn.
@@ -1736,6 +1772,8 @@ def _save_learned_facts(
         except EmbeddingUnavailable:
             pass                 # the fact is stored; it is just not searchable by meaning right now
         except Exception as exc:  # noqa: BLE001 - one bad exchange shouldn't sink the rest
+            if strict:
+                raise                # the durable queue keeps the exchange and retries it later
             logger.warning("Learned-fact save failed: %s", exc)
 
 
@@ -1747,19 +1785,15 @@ def _distill_on_exit(
     session_id: int,
     console: Console,
     tool_exchanges: list[tuple],
+    distiller: Any = None,
 ) -> None:
-    """Wrap up the finished session: distill durable personal facts from the
-    transcript, and separately save any durable facts learned via a tool
-    this session (product specs, dates, etc. - see _save_learned_facts).
-    Both happen here, once, under one spinner - never mid-chat.
-    """
-    try:
-        with console.status("[dim]wrapping up - taking notes before I go...[/dim]"):
-            distill_session(store, vectors, client, config, session_id)
-            if tool_exchanges:
-                _save_learned_facts(client, config, store, vectors, tool_exchanges)
-    except Exception as exc:  # noqa: BLE001 - remembering must never crash on exit
-        logger.warning("Fact distillation failed: %s", exc)
+    """Wrap up a finished chat WITHOUT waiting for a model. Facts were already saved while chatting; what is left
+    (messages and tool exchanges the memory worker has not reached) stays in the durable queue and is finished at
+    the next start or by `nightage memory process`. This only stops the worker (a step already running gets
+    `memory.exit_wait_seconds` at most), queues the tool exchanges and prints one dim line. See agent.memory.queue."""
+    from agent.memory.queue import finish
+
+    finish(distiller, store, session_id, tool_exchanges, config, console)
 
 
 def _run_repl_stateless(

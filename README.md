@@ -189,6 +189,10 @@ nightage memory search Q   # semantic, falls back to substring
 nightage memory add TEXT   # tell it something directly
 nightage memory forget ID  # take it back
 nightage memory prune      # bin the junk facts it scraped from tool output
+nightage memory check      # test that saving and recalling a fact works here
+nightage memory process    # finish saving facts that a closed chat left queued
+nightage embed list        # memory (embedding) models: size, languages, what fits
+nightage embed use TAG     # switch the memory model and rebuild the index
 nightage audit             # everything it has run
 nightage panel             # live machine + Ollama status
 nightage settings show     # current config
@@ -246,7 +250,7 @@ Switches: `AGENT_VERIFY=0`, `AGENT_PLAN=0`, `AGENT_AUTO_LOOKUP=0`, `AGENT_COMPAC
 |---|---|---|
 | `models.chat` | `qwen2.5:7b` | chatting and tool use |
 | `models.background` | `qwen2.5:7b` | pulling facts out of conversations |
-| `models.embed` | `bge-m3` | embeddings, multilingual, 1024-dim |
+| `models.embed` | `bge-m3` | the memory model: multilingual (German, French, ...), 1.2 GB. `all-minilm` is English only and 46 MB: `nightage embed list` |
 | `coding.executor.model` | `qwen2.5-coder:7b` | the model behind `nightage code` (swap with `nightage code-model`) |
 
 `nightage code-model` lists what you have plus a few recommended coders, from the
@@ -258,8 +262,14 @@ and then the model will happily *invent* a directory listing rather than admit i
 can't read one. `qwen2.5:7b` and `llama3.1:8b` both work; `gemma2`
 doesn't. It warns you at startup if you pick one that can't.
 
-Otherwise any Ollama model works. If you swap the embedding model, run
-`nightage reembed <model>` and it rebuilds the index at the new size.
+Otherwise any Ollama model works. **Memory.** Facts about you are saved *while you chat*
+(a small background model, only when the chat model is idle), so quitting never waits for
+a model; anything not yet saved is finished at the next start. The memory (embedding) model
+runs on the CPU and you can pick a small one to keep RAM for the chat model: English-only
+`all-minilm` (46 MB) or `nomic-embed-text` (274 MB), multilingual `embeddinggemma` (239 MB)
+or `bge-m3` (1.2 GB). `nightage embed use <model>` switches and rebuilds the index at the
+new size; the installers offer the same short list. How it all works, how to inspect it and
+what stays local: [docs/MEMORY.md](docs/MEMORY.md).
 
 ## Big models on two GPUs (Vulkan Ollama)
 

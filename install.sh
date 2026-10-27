@@ -23,6 +23,8 @@
 #       --no-ollama    do not touch Ollama (use this if it runs on another machine)
 #       --no-model     do not offer a model download
 #       --model NAME   use this Ollama model instead of the recommended one
+#       --embed TAG    use this memory (embedding) model, e.g. all-minilm; without it you choose from a short list
+#       --no-embed     do not offer a memory model (Nightage then recalls by keywords only)
 #       --with-ollama  say yes to installing Ollama with its official installer (Linux: this needs sudo)
 #       --source X     install from X: a folder, a .tar.gz/.zip URL, or a git+https URL (default: see below)
 #       --uninstall    remove Nightage (asks before touching your data)
@@ -49,6 +51,9 @@ FORCE=0
 UNINSTALL=0
 SOURCE=""
 MODEL_OVERRIDE=""
+EMB_READY=0
+EMBED_OVERRIDE=""
+NO_EMBED=0
 STEP=0
 TOTAL=7
 TMPD=""
@@ -111,6 +116,73 @@ ask() {
   esac
 }
 
+# The memory (embedding) models offered below. MIRRORS agent/embedmodels.py (tests/test_installers.py checks that tags and
+# sizes agree). Lines: number|tag|download MB|who it is for. Sizes are the ollama.com download sizes.
+EMB_TABLE='1|all-minilm|46|English only - smallest, fastest
+2|nomic-embed-text|274|English only - small, good all-rounder
+3|embeddinggemma:300m-qat-q4_0|239|Multilingual (100+ languages, e.g. German, French, Spanish) - small
+4|granite-embedding:278m|563|Multilingual - mid size
+5|bge-m3|1200|Multilingual (100+ languages, e.g. German, French) - best for non-English chats, biggest'
+
+# emb_lang -> english | multilingual | unknown, from the locale (the same rule as agent/embedmodels.py language_hint)
+emb_lang() {
+  el_v="${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}"
+  case "$el_v" in
+    ""|C|POSIX|C.*|POSIX.*) echo unknown ;;
+    en|en_*|en.*|en@*|en-*) echo english ;;
+    *) echo multilingual ;;
+  esac
+}
+
+# emb_recommend RAM_MB LANG -> the tag to start with (the same rules as agent/embedmodels.py recommend)
+emb_recommend() {
+  if [ "$2" = english ]; then
+    if [ "$1" -lt 4096 ]; then echo all-minilm; else echo nomic-embed-text; fi
+  elif [ "$1" -lt 4096 ]; then
+    if [ "$2" = unknown ]; then echo all-minilm; else echo "embeddinggemma:300m-qat-q4_0"; fi
+  elif [ "$2" = multilingual ] && [ "$1" -ge 16384 ]; then echo bge-m3
+  else echo "embeddinggemma:300m-qat-q4_0"; fi
+}
+
+# emb_field TAG N -> field N (2 = tag, 3 = MB, 4 = label) of the table line for TAG, empty when unknown
+emb_field() {
+  printf '%s\n' "$EMB_TABLE" | awk -F'|' -v t="$1" -v n="$2" '$2 == t { print $n }'
+}
+
+# choose_embed -> sets EMB to a tag, or "" for none. A numbered choice; Enter (or --yes) takes the recommended one.
+choose_embed() {
+  EMB=""
+  ce_rec=$(emb_recommend "$RAM" "$(emb_lang)")
+  if [ -n "$EMBED_OVERRIDE" ]; then EMB="$EMBED_OVERRIDE"; info "Using the memory model you asked for: $EMB"; return 0; fi
+  printf '   %sThe memory model lets Nightage recall things by meaning. It runs on the CPU, so a smaller one leaves more memory for the chat model.%s\n' "$D" "$N"
+  printf '%s\n' "$EMB_TABLE" | while IFS='|' read -r ce_n ce_t ce_mb ce_l; do
+    ce_mark=""; [ "$ce_t" = "$ce_rec" ] && ce_mark="   <- recommended for this computer"
+    printf '     %s) %-32s %8s   %s%s\n' "$ce_n" "$ce_t" "$(human_size "$ce_mb")" "$ce_l" "$ce_mark"
+  done
+  printf '     0) none - Nightage still works and searches memory by keywords\n'
+  if [ "$YES" = 1 ] || [ "$DRY" = 1 ]; then
+    if [ "$DRY" = 1 ] && [ "$YES" != 1 ]; then ce_note="dry run: would ask, default"; else ce_note="auto"; fi
+    printf '   %s?%s Which memory model? %s[%s: %s]%s\n' "$C" "$N" "$D" "$ce_note" "$ce_rec" "$N"
+    log "question: memory model -> $ce_rec ($ce_note)"
+    EMB="$ce_rec"; return 0
+  fi
+  printf '   %s?%s Which memory model? %s[number, Enter = recommended]%s ' "$C" "$N" "$D" "$N"
+  if [ -t 0 ]; then
+    read -r ce_r || ce_r=""
+  elif [ -r /dev/tty ] && (: </dev/tty) 2>/dev/null; then
+    read -r ce_r </dev/tty || ce_r=""
+  else
+    printf '\n'
+    die "There is no terminal to ask you on. Run again with --yes to accept the defaults, or download the script and run it: sh install.sh"
+  fi
+  log "question: memory model -> '$ce_r'"
+  case "$ce_r" in
+    0|[nN]*) EMB="" ;;
+    [1-9]) EMB=$(printf '%s\n' "$EMB_TABLE" | awk -F'|' -v n="$ce_r" '$1 == n { print $2 }'); [ -n "$EMB" ] || EMB="$ce_rec" ;;
+    *) EMB="$ce_rec" ;;
+  esac
+}
+
 # run CMD ARGS...  -> shows the exact command first; in a dry run it is only shown.
 run() {
   printf '   %s$%s %s\n' "$D" "$N" "$*"
@@ -136,6 +208,9 @@ while [ $# -gt 0 ]; do
     --source=*) SOURCE="${1#--source=}" ;;
     --model) [ $# -ge 2 ] || { echo "--model needs a value" >&2; exit 2; }; MODEL_OVERRIDE="$2"; shift ;;
     --model=*) MODEL_OVERRIDE="${1#--model=}" ;;
+    --embed) [ $# -ge 2 ] || { echo "--embed needs a value" >&2; exit 2; }; EMBED_OVERRIDE="$2"; shift ;;
+    --embed=*) EMBED_OVERRIDE="${1#--embed=}" ;;
+    --no-embed) NO_EMBED=1 ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'Unknown option: %s\nTry: sh install.sh --help\n' "$1" >&2; exit 2 ;;
   esac
@@ -487,13 +562,28 @@ else
       fi
     fi
     # the memory model: recall by meaning instead of by keywords (Nightage works without it)
-    EMB="bge-m3"
-    if [ "$DRY" != 1 ] && ollama list 2>/dev/null | awk 'NR>1{print $1}' | grep -qE "^$EMB(:|$)"; then
-      ok "$EMB (the memory model) is already downloaded"
-    elif ask "Also download the memory model $EMB (about 1.2 GB)? It lets Nightage recall things by meaning, not just by keywords." y; then
-      run ollama pull "$EMB" || warn "Download failed. Later:  ollama pull $EMB"
+    if [ "$NO_EMBED" = 1 ]; then
+      info "Skipped (--no-embed). Nightage searches memory by keywords. Later:  nightage embed list"
     else
-      info "Skipped. Nightage still works and falls back to keyword search. Later:  ollama pull $EMB"
+      choose_embed
+      if [ -z "$EMB" ]; then
+        info "No memory model. Nightage still works and falls back to keyword search. Later:  nightage embed list"
+      else
+        ESIZE=$(emb_field "$EMB" 3); ESIZE_TXT=""
+        [ -n "$ESIZE" ] && ESIZE_TXT=" (about $(human_size "$ESIZE"))"
+        if [ "$DRY" != 1 ] && ollama list 2>/dev/null | awk 'NR>1{print $1}' | grep -qE "^$EMB(:|$)"; then
+          ok "$EMB (the memory model) is already downloaded"
+          EMB_READY=1
+        elif ask "Download the memory model $EMB${ESIZE_TXT}?" y; then
+          if run ollama pull "$EMB"; then EMB_READY=1; else warn "Download failed. Later:  nightage embed use $EMB"; fi
+        else
+          info "Skipped. Nightage still works and falls back to keyword search. Later:  nightage embed use $EMB"
+        fi
+        # `embed use` also rebuilds the memory index when the model changes, so an older install never mixes vector sizes
+        if [ "$EMB_READY" = 1 ] || [ "$DRY" = 1 ]; then
+          run "$NBIN" embed use "$EMB" --yes --no-pull || warn "Could not switch now; run later:  nightage embed use $EMB"
+        fi
+      fi
     fi
   fi
 fi

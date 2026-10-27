@@ -5,7 +5,9 @@
 profile: default
 models:
   chat: qwen2.5:7b            # must support tool calling (`ollama show <model>` lists "tools")
-  background: qwen2.5:7b
+  background: qwen2.5:7b      # saves facts about you while you chat (a small, fast model is enough)
+  # The memory (embedding) model. bge-m3: multilingual (German, French, ...), 1.2 GB. all-minilm: English only, 46 MB.
+  # `nightage embed list` shows the choices with sizes; `nightage embed use <tag>` switches and rebuilds the index.
   embed: bge-m3
   unrestricted: qwen2.5:7b    # only used by the optional WhatsApp analysis module
   weekly: ''
@@ -74,6 +76,10 @@ memory:
   recall_k: 6
   recall_min_similarity: 0.55
   context_char_budget: 24000
+  # Facts are saved while you chat, never when you quit (docs/MEMORY.md).
+  distill_every_turns: 1       # extract once this many of your messages are waiting and the chat model is idle
+  distill_batch_messages: 8
+  exit_wait_seconds: 3.0       # quitting waits at most this long for an extraction already running
   reverify_assumed_after_hours: 24
 tools:
   max_iterations: 60
