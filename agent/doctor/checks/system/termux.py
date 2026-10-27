@@ -24,7 +24,50 @@ def api(ctx: Context):
 def wakelock(ctx: Context):
     if not ctx.p.which("termux-wake-lock"):
         return info("`termux-wake-lock` not found (comes with the termux-api package)")
+    if _local_ollama(ctx) and ctx.ollama.reachable:
+        return info("Ollama runs on this phone: run `termux-wake-lock` (or tap Acquire wakelock in the Termux notification) so Android does "
+                    "not suspend it when the screen is off")
     return info("long jobs: run `termux-wake-lock` first, or Android may stop Termux when the screen is off")
+
+
+def _local_ollama(ctx: Context) -> bool:
+    url = ctx.ollama.url or ""
+    if not url:
+        return True
+    from agent.doctor.checks.ollama import is_remote
+
+    return not is_remote(url)
+
+
+@check("termux.ollama", "system", "Ollama on this phone", systems=("termux",))
+def ollama_here(ctx: Context):
+    """One line a phone user can act on: is the program installed, is the server up, is the chat model there."""
+    oll = ctx.ollama
+    if not _local_ollama(ctx):
+        return info(f"the models run on {oll.url} (remote), not on this phone")
+    binary = ctx.p.which("ollama")
+    if not binary:
+        return warn("not installed on this phone", "Run `pkg install ollama` (or use a model on another machine: set `ollama.host`).")
+    if not oll.reachable:
+        return warn("installed, but the server is not running", "Run `nightage ollama start` (it also starts by itself when you open a chat).")
+    chat = str(ctx.section("models").get("chat") or "")
+    from agent.doctor.probes import model_installed
+
+    if chat and not model_installed(chat, oll.models):
+        return warn(f"running, but the chat model {chat} is not downloaded", f"Run `nightage pull {chat}` (shows a percent bar; Ctrl+C is safe, run it again to resume).")
+    return ok(f"running, {len(oll.models)} model(s) installed")
+
+
+@check("termux.phantom", "system", "Android background limits", systems=("termux",))
+def phantom(ctx: Context):
+    """UNVERIFIED hints (no phone was available): Android 12+ may kill Termux's child processes (the 'phantom process killer')."""
+    if not (_local_ollama(ctx) and (ctx.p.which("ollama") or ctx.ollama.reachable)):
+        return None
+    return info("Android 12+ can silently kill background programs such as the Ollama server (UNVERIFIED on your device)",
+                "If the server dies while you chat: (1) keep Termux open and run `termux-wake-lock`; (2) on Android 14+ try Settings > Developer options > "
+                "'Disable child process restrictions'; (3) as a last resort, from a PC with adb: "
+                "`adb shell settings put global settings_enable_monitor_phantom_procs false` (Android 12-13; changes a system setting, "
+                "see docs/TERMUX.md first).")
 
 
 @check("termux.battery", "system", "Battery saving", systems=("termux",), timeout=8)

@@ -101,6 +101,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # machine. The OLLAMA_HOST environment variable wins over this key. "keep_alive" ("30m" by default) is how long a model
         # stays loaded after a call.
         "host": "",
+        # Start `ollama serve` in the background when the chat / code / research / web command begins, nothing answers on this machine
+        # and an `ollama` program is installed (never when `host` points at another machine). Off: start it yourself (nightage ollama start).
+        "autostart": True,
+        # When you leave, stop the server again - only if Nightage started it itself (a server you or the system started is never
+        # stopped). Loaded models are freed first (unload_on_exit). A SIGKILL cannot be caught: the next run notices the leftover.
+        "stop_on_exit": True,
     },
     "ui": {
         # What the status line says while the model is generating and nothing can be shown
@@ -185,6 +191,18 @@ def _deep_merge(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, An
     return merged
 
 
+AUTO = "auto"
+AUTO_ROLES = ("chat", "background", "coding", "reasoning", "unrestricted", "embed")      # "weekly" stays "" (= falls back to background)
+
+LAST_LOAD: dict[str, Any] = {"path": "", "user_models": [], "profile": "default", "existed": False}
+
+
+def last_load() -> dict[str, Any]:
+    """Which file the last `load_config` read and which `models.*` keys that FILE set (as opposed to defaults / the profile).
+    Kept outside the config dict on purpose: some commands dump the config back to config.yaml."""
+    return dict(LAST_LOAD)
+
+
 def load_config(
     config_path: Path = DEFAULT_CONFIG_PATH,
     data_dir: Path = DEFAULT_DATA_DIR,
@@ -196,15 +214,27 @@ def load_config(
     in an older config file. Always returns a fresh dict.
     """
     data_dir.mkdir(parents=True, exist_ok=True)
+    LAST_LOAD.update(path=str(config_path), existed=config_path.exists(), user_models=[])
 
     if not config_path.exists():
-        config_path.write_text(yaml.dump(DEFAULT_CONFIG, sort_keys=False))   # the file always gets the plain defaults, never an overlay
+        fresh = copy.deepcopy(DEFAULT_CONFIG)           # the file gets the plain defaults, never an overlay - except the model roles:
+        for role in AUTO_ROLES:                         # "auto" = take what is installed (agent/modelpick.py), do not pin an absent model
+            fresh["models"][role] = AUTO
+        config_path.write_text(yaml.dump(fresh, sort_keys=False))
         return _finish(copy.deepcopy(DEFAULT_CONFIG), {})
 
     with config_path.open() as f:
         loaded = yaml.safe_load(f) or {}
 
     return _finish(copy.deepcopy(DEFAULT_CONFIG), loaded)
+
+
+def _without_auto(loaded: Any) -> Any:
+    m = loaded.get("models") if isinstance(loaded, dict) else None
+    if not isinstance(m, dict):
+        return loaded
+    kept = {k: v for k, v in m.items() if not (k in AUTO_ROLES and str(v or "").strip().lower() in ("", AUTO))}
+    return {**loaded, "models": kept}
 
 
 def _finish(base: dict[str, Any], loaded: dict[str, Any]) -> dict[str, Any]:
@@ -222,7 +252,12 @@ def _finish(base: dict[str, Any], loaded: dict[str, Any]) -> dict[str, Any]:
             base = _deep_merge(base, profiles.overlay_for(name, remote=remote))
     except Exception:  # noqa: BLE001 - a profile problem must never stop the config from loading
         name = "default"
+    loaded = _without_auto(loaded)                       # "auto" / "" in the file = not chosen: the shipped default stands until modelpick resolves it
     merged = _deep_merge(base, loaded)
+    um = loaded.get("models") if isinstance(loaded, dict) else None
+    # A value identical to the shipped default does not count as "chosen by the user": the first run writes ALL defaults into config.yaml.
+    dm = DEFAULT_CONFIG.get("models", {})
+    LAST_LOAD.update(user_models=sorted(k for k, v in um.items() if v and v != dm.get(k)) if isinstance(um, dict) else [], profile=name)
     merged["profile"] = name
     _apply_runtime(merged, name)
     return merged

@@ -109,6 +109,16 @@ EDITABLE: dict[str, dict[str, Any]] = {
                 "off if you chat often and don't mind the GPU staying busy "
                 "between sessions.",
     },
+    "autostart_ollama": {
+        "path": "ollama.autostart", "kind": "bool", "category": "Performance",
+        "help": "Start Ollama in the background when a chat, code, research or web run begins and nothing answers on this machine "
+                "(only if the ollama program is installed, and never when ollama.host points at another computer).",
+    },
+    "stop_ollama_on_exit": {
+        "path": "ollama.stop_on_exit", "kind": "bool", "category": "Performance",
+        "help": "Stop the Ollama server when you leave, but only if Nightage started it itself (your own or the system's server is "
+                "never stopped). Loaded models are freed first.",
+    },
     "pause_on_game": {
         "path": "background.pause_on_game", "kind": "bool", "category": "Performance",
         "help": "Pause all background AI work (summaries, digests, watch) "
@@ -345,6 +355,8 @@ def set_value(name: str, value: Any) -> tuple[str, Any]:
     for part in parts[:-1]:
         node = node.setdefault(part, {})
     node[parts[-1]] = coerced
+    if name == "coding_model":      # models.coding overrides coding.executor.model (agent/coding/config.py): keep both in step, otherwise
+        data.setdefault("models", {})["coding"] = coerced      # the edit is silently ignored and the OLD model keeps being used
     path.write_text(yaml.safe_dump(data, sort_keys=True))
     return dotted, coerced
 

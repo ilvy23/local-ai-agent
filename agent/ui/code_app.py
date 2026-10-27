@@ -394,12 +394,13 @@ def run_code_ui(folder: str | None = None, goal: str | None = None, *, resume: s
     """`nightage code`. Returns a process exit code: with a goal, the goal run's (0 done, 1 not finished/declined, 2 needs a human, 3 partial,
     130 stopped); otherwise 0. `once` ends the UI when the goal run (and queued follow-ups) finished. `resume`: None, "latest" or a session
     id prefix (as session.run_session)."""
-    from agent import foreground
+    from agent import foreground, friendly
     from agent.codeagent import policy as policy_mod
     from agent.codeagent import session as S
     from agent.codeagent.supervisor import should_autopilot
     from agent.config import load_config
 
+    friendly.quiet_logging()
     err = Console(stderr=True)
     stages = stages or plan_first
     cfg = S.with_stages(S.with_keep_model(config if config is not None else load_config(), keep_model), stages)
@@ -423,7 +424,9 @@ def run_code_ui(folder: str | None = None, goal: str | None = None, *, resume: s
     if (input is None and goal is None and not mode and str(root) not in policy_mod.all_repos()
             and policy_mod.for_repo(root).mode == "ask"):
         S.ask_access(err, root)                                # before the dock exists: the one place a console prompt is fine
-    with foreground.session(cfg):
+    from agent import ollama_local
+
+    with ollama_local.session(cfg, say=lambda m: err.print(f"[dim]{m}[/dim]")), foreground.session(cfg):
         holder, bind = late_console()                          # the engine's console: its lines go into the UI once it exists
         engine, llm, store = CodeRunner.open_engine(run_cfg, root, holder, test=test)
         try:

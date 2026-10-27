@@ -738,8 +738,8 @@ class Renderer:
     def _on_awaiting_approval(self, ev: UiEvent) -> None:
         self.console.print(self.approval_card(ev.data))
 
-    def error_card(self, message: str) -> Any:
-        step = next_step_for(message)
+    def error_card(self, message: str, next_step: str = "") -> Any:
+        step = next_step or next_step_for(message)
         t = Text()
         t.append(f"{self.g.cross} {message}", style=self._st("red"))
         if step:
@@ -747,7 +747,7 @@ class Renderer:
         return t
 
     def _on_error(self, ev: UiEvent) -> None:
-        self.console.print(self.error_card(str(ev.data.get("message") or ev.data.get("error") or "unknown error")))
+        self.console.print(self.error_card(str(ev.data.get("message") or ev.data.get("error") or "unknown error"), str(ev.data.get("next") or "")))
         self._turn_started = None
 
     def _on_done(self, ev: UiEvent) -> None:

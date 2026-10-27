@@ -576,7 +576,7 @@ function Select-EmbedChoice([int]$RamMb) {
 # ---- 6. model
 Show-Step "The AI model"
 if ($NoModel) {
-    Info "Skipped (-NoModel). Pick one later with: ollama pull <name>   then   nightage settings set chat_model <name>"
+    Info "Skipped (-NoModel). Pick one later with: ollama pull <name>   then   nightage models use <name>"
 } else {
     $pick = Select-Model $ram $gpu.VramMb
     $chosen = $pick.Model; $sizeMb = $pick.SizeMb
@@ -584,7 +584,7 @@ if ($NoModel) {
     else { Info ("For this computer (about {0} usable for a model, from {1}) the best fit is: {2}  (download about {3})" -f (Format-Size $pick.BudgetMb), $pick.Source, $chosen, (Format-Size $sizeMb)) }
     if ($NoOllama -or ((-not (Have "ollama")) -and (-not $DryRun))) {
         Info "Ollama is not available here, so nothing is downloaded now. Run this installer again once Ollama is installed,"
-        Info ("or later:  ollama pull " + $chosen + "   then   nightage settings set chat_model " + $chosen)
+        Info ("or later:  ollama pull " + $chosen + "   then   nightage models use " + $chosen)
     } else {
         $have = (-not $DryRun) -and (Test-ModelInstalled $chosen)
         if ($have) { Ok ($chosen + " is already downloaded") }
@@ -595,9 +595,9 @@ if ($NoModel) {
             } else { Info ("Skipped. Later:  ollama pull " + $chosen) }
         }
         if ($DryRun -or (Test-ModelInstalled $chosen)) {
-            if (Ask-User ("Tell Nightage to use " + $chosen + " for chat?") "y") {
-                $code = Invoke-Shown $nightageExe @("settings", "set", "chat_model", $chosen)
-                if ($code -ne 0) { Warn ("Could not save it now; run later:  nightage settings set chat_model " + $chosen) }
+            if (Ask-User ("Tell Nightage to use " + $chosen + " for everything (chat, code, notes)?") "y") {
+                $code = Invoke-Shown $nightageExe @("models", "use", $chosen, "--yes")
+                if ($code -ne 0) { Warn ("Could not save it now; run later:  nightage models use " + $chosen) }
             }
         }
         # the memory model: recall by meaning instead of by keywords (Nightage works without it)

@@ -16,6 +16,13 @@ def pytest_collection_modifyitems(config, items):
 
 
 @pytest.fixture(autouse=True)
+def _no_ollama_session(monkeypatch):
+    """Entry points wrap their run in agent.ollama_local.session (autostart + exit cleanup + signal handlers): never in tests."""
+    monkeypatch.setenv("NIGHTAGE_OLLAMA_SESSION", "off")
+    monkeypatch.setenv("NIGHTAGE_NO_AUTOSTART", "1")
+
+
+@pytest.fixture(autouse=True)
 def _no_embedding_backoff(monkeypatch):
     """Don't make the suite wait out the embedding retry's backoff.
 
@@ -77,3 +84,13 @@ def _research_stays_offline(monkeypatch, tmp_path):
 def _no_real_plugins(monkeypatch, tmp_path):
     """Tests never load the developer's real plugins (the WhatsApp plugin reads private message data)."""
     monkeypatch.setenv("AGENT_PLUGIN_DIR", str(tmp_path / "no-plugins"))
+
+
+@pytest.fixture(autouse=True)
+def _fresh_notices():
+    """Once-per-session notices (agent.friendly.once) start fresh in every test; the model-list cache too."""
+    from agent import friendly, modelpick
+
+    friendly.forget_notices()
+    modelpick.forget_cache()
+    yield

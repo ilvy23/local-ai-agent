@@ -658,7 +658,9 @@ def run_session(folder: str | None = None, goal: str | None = None, new: bool = 
     known = policy_mod.all_repos()
     if str(root) not in known and policy_mod.for_repo(root).mode == "ask" and interactive and not mode:
         ask_access(console, root)
-    with foreground.session(config):
+    from agent import ollama_local
+
+    with ollama_local.session(config, say=lambda m: console.print(f"[dim]{m}[/dim]")), foreground.session(config):
         engine, llm, store = open_engine(console, run_config, root, interactive, test)
         try:
             free_gpu(console, llm, engine.model)

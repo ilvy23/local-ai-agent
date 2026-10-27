@@ -397,6 +397,8 @@ def run_turn(
         return TurnOutcome(None, tools_called, suspended=True)
     except BaseException as exc:
         if g is not None and g.always_done:
-            sink.event("error", message=str(exc) or type(exc).__name__, code=type(exc).__name__)
+            from agent import friendly
+
+            sink.event("error", **friendly.error_fields(exc, model))
             close("", failed=True)
         raise

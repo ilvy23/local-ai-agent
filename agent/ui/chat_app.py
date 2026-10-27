@@ -125,16 +125,20 @@ def run_chat_ui(config: dict[str, Any], *, session_id: int | None = None, resume
 
         return run_demo(plain=plain, input=input, output=output)
 
-    from agent import foreground, tui
+    from agent import foreground, friendly, tui
     from agent.llm import OllamaClient
 
+    friendly.quiet_logging()
     own_client, own_store = client is None, store is None
     client = client if client is not None else OllamaClient()
     store = store if store is not None else (open_store_fn or open_store)(config)
     err = Console(stderr=True)
     exit_code = 0
     ctx = foreground.session(config) if own_store else _Null()
-    with ctx:
+    from agent import ollama_local
+
+    oll = ollama_local.session(config, say=lambda m: err.print(f"[dim]{m}[/dim]")) if own_client else _Null()
+    with oll, ctx:
         try:
             sid, problem = resolve_session(store, session_id, resume)
             if problem:
@@ -182,6 +186,11 @@ def _print_start(app: Any, state: ChatState, quiet: Console, resumed_id: int | N
                 r.info(ln)
             r.info("--- end of history ---")
     r.print(Text(f"{state.persona_name} is ready. Type /help for commands."))
+    from agent import friendly
+
+    vectors = getattr(state, "vectors", None)
+    if vectors is not None and getattr(vectors, "available", True) is False and friendly.once("vector-extension"):
+        r.info("Memory searches by keywords only (the vector add-on is missing). Details: nightage doctor")
     buf = io.StringIO()
     tui._warn_if_model_cannot_use_tools(Console(file=buf, force_terminal=False, width=100), client, state.model)
     if buf.getvalue().strip():

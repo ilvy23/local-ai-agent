@@ -398,14 +398,12 @@ def _http_error_message(exc: httpx.HTTPError) -> str:
     rejecting the request) is surfaced with its actual status and message
     instead, so it isn't misreported as "could not reach Ollama".
     """
-    if isinstance(exc, httpx.HTTPStatusError):
-        response = exc.response
-        try:
-            detail = response.json().get("error", response.text)
-        except ValueError:
-            detail = response.text
-        return f"[red]Ollama error {response.status_code}:[/red] {detail}"
-    return CONNECTION_HINT
+    from rich.markup import escape
+
+    from agent import friendly
+
+    line, hint = friendly.explain(exc)
+    return f"[red]{escape(line)}[/red] [dim]next: {escape(hint)}[/dim]"
 
 
 class ChatSession:
@@ -1199,7 +1197,9 @@ def _run_agent_turn(*args: Any, **kwargs: Any) -> tuple[str | None, set[str]]:
     except BaseException as exc:
         failed = True
         if ctl is not None:
-            ctl.event("error", message=str(exc) or type(exc).__name__, code=type(exc).__name__)
+            from agent import friendly
+
+            ctl.event("error", **friendly.error_fields(exc))     # never the raw httpx text (it carries a developer-docs URL)
         raise
     finally:
         tracker.finish()
@@ -1426,6 +1426,9 @@ def run_repl(
     context is assembled from persona + facts + semantic recall, and durable
     facts are distilled from the transcript when the session ends.
     """
+    from agent import friendly
+
+    friendly.quiet_logging()
     console = console or Console()
     model = config["models"]["chat"]
     persona_name = config["persona"]["name"]

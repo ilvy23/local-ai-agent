@@ -441,3 +441,43 @@ def test_memory_roundtrip_by_meaning_by_keyword_and_with_a_broken_embedder(tmp_p
     assert broken.status == "warn" and "Ollama answered 500" in broken.detail
     strict = {**cfg, "memory": {"recall_k": 6, "recall_min_similarity": 0.99}}
     assert "recall_min_similarity" in one("memory.roundtrip", tmp_path, strict, ollama=UP).detail
+
+
+def test_termux_ollama_checks(tmp_path):
+    from agent.doctor.probes import OllamaInfo
+
+    phone = sysinfo.SysInfo(os_family="android-termux", is_termux=True, ram_total_mb=11000)
+    down = OllamaInfo(url="http://localhost:11434")
+    r = one("termux.ollama", tmp_path, si=phone, ollama=down)
+    assert r.status == "warn" and "pkg install ollama" in r.hint                       # no binary
+    r = one("termux.ollama", tmp_path, si=phone, ollama=down, bins=("ollama",))
+    assert r.status == "warn" and "nightage ollama start" in r.hint                    # binary, no server
+    up = OllamaInfo(url="http://localhost:11434", reachable=True, version="0.40.11", models={"all-minilm:latest": 46_000_000})
+    r = one("termux.ollama", tmp_path, si=phone, ollama=up, bins=("ollama",), cfg={"models": {"chat": "qwen3.5:4b"}})
+    assert r.status == "warn" and "nightage pull qwen3.5:4b" in r.hint                 # server, no chat model
+    up.models["qwen3.5:4b"] = 3_400_000_000
+    assert one("termux.ollama", tmp_path, si=phone, ollama=up, bins=("ollama",), cfg={"models": {"chat": "qwen3.5:4b"}}).status == "ok"
+    remote = OllamaInfo(url="http://100.64.0.5:11434", reachable=True, version="0.40.11")
+    assert one("termux.ollama", tmp_path, si=phone, ollama=remote).status == "info"
+
+
+def test_termux_phantom_note_is_unverified_and_ordered_safest_first(tmp_path):
+    from agent.doctor.probes import OllamaInfo
+
+    phone = sysinfo.SysInfo(os_family="android-termux", is_termux=True, ram_total_mb=11000)
+    r = one("termux.phantom", tmp_path, si=phone, ollama=OllamaInfo(url="http://localhost:11434"), bins=("ollama",))
+    assert r.status == "info" and "UNVERIFIED" in r.detail
+    assert r.hint.index("wake-lock") < r.hint.index("Developer options") < r.hint.index("adb")
+    assert one("termux.phantom", tmp_path, si=phone, ollama=OllamaInfo(url="http://100.64.0.5:11434", reachable=True)) == []         # remote model: nothing to say
+
+
+def test_config_models_check(tmp_path):
+    from agent.doctor.probes import OllamaInfo
+
+    up = OllamaInfo(url="http://localhost:11434", reachable=True, version="0.40", models={"qwen3.5:0.8b": 1_000_000_000, "all-minilm:latest": 46_000_000})
+    r = one("config.roles", tmp_path, ollama=up, cfg={})
+    assert r.status == "info" and any(x.startswith("chat: qwen3.5:0.8b") and "installed models" in x for x in r.lines)
+    r = one("config.roles", tmp_path, ollama=up, cfg={"models": {"chat": "llama3:8b"}})
+    assert r.status == "warn" and "llama3:8b" in r.detail and "nightage models use qwen3.5:0.8b" in r.hint
+    r = one("config.roles", tmp_path, ollama=OllamaInfo(url="http://localhost:11434"), cfg={"models": {"chat": "auto"}})
+    assert r.status == "info" and not any("NOT installed" in x for x in r.lines)

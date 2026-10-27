@@ -21,6 +21,7 @@ from agent.memory.store import Store
 from agent.memory.vectors import VectorIndex
 from agent.tui import _unload_models_on_exit, run_repl
 
+from agent import ollama_local
 from agent.wa import wa_app
 
 app = typer.Typer(add_completion=False, help=brand.TAGLINE)
@@ -32,6 +33,12 @@ app.add_typer(wa_app, name="wa")
 from agent.embed_cli import embed_app  # noqa: E402
 
 app.add_typer(embed_app, name="embed")
+from agent.ollama_cli import register as _register_ollama  # noqa: E402
+
+_register_ollama(app)       # `nightage ollama ...` and `nightage pull <model>`
+from agent.models_cli import models_app  # noqa: E402
+
+app.add_typer(models_app, name="models")
 
 # Optional command groups of the private edition. Absent files (the public export) simply mean no such commands.
 try:
@@ -306,7 +313,7 @@ def chat(
         raise typer.Exit(run_chat_ui(config, plain=True if plain else None, open_store_fn=_open_store))
     client = OllamaClient()
 
-    with foreground.session(config), _open_store(config) as store:
+    with ollama_local.session(config, say=lambda m: console.print(f"[dim]{m}[/dim]")), foreground.session(config), _open_store(config) as store:
         try:
             run_repl(client, config, console=console, store=store)
         finally:
@@ -377,6 +384,7 @@ def web(
     except ImportError:
         typer.echo("The web GUI needs its extra packages: uv sync --group web", err=True)
         raise typer.Exit(1) from None
+    from agent.config import load_config as _load
     from agent.web.auth import auth_enabled, get_token
 
     if host is None:
@@ -388,7 +396,8 @@ def web(
         typer.echo("WARNING: AGENT_WEB_AUTH=off - the API is open to anyone who can reach this address.", err=True)
     if host not in ("127.0.0.1", "localhost", "::1"):
         typer.echo(f"Listening on {host}:{port} - reachable from other devices; keep it on your tailnet.", err=True)
-    uvicorn.run("agent.web.app:app", host=host, port=port, log_level="info")
+    with ollama_local.session(_load(), say=lambda m: typer.echo(m, err=True), require_chat=False):
+        uvicorn.run("agent.web.app:app", host=host, port=port, log_level="info")
 
 
 @app.command()
@@ -1012,13 +1021,18 @@ def research(
 
 
 def _run_research(question: str, max_subquestions: int = 12, budget_chars: int = 20000, out_dir: str = "deep_research") -> None:
+    console = Console()
+    config = load_config()
+    with ollama_local.session(config, say=lambda m: console.print(f"[dim]{m}[/dim]")):
+        _run_research_body(console, config, question, max_subquestions, budget_chars, out_dir)
+
+
+def _run_research_body(console: Console, config: dict, question: str, max_subquestions: int, budget_chars: int, out_dir: str) -> None:
     from agent.research import deep
     from agent.tools.deep_research import make_complete
     from agent.tools.files import write_file
     from agent.tools.web import make_web_tools
 
-    console = Console()
-    config = load_config()
     client = _open_llm()
     model = (config.get("code") or {}).get("model") or config["models"]["chat"]
     search_tool, fetch_tool = make_web_tools(console)

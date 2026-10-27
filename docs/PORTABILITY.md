@@ -101,7 +101,9 @@ network such as a tailnet, never to the open internet.
 The termux-packages repository has an `ollama` package (`packages/ollama/build.sh`, version 0.40.11 when checked; excluded for 32-bit
 arm and i686, so aarch64/x86_64 only; Vulkan backend). So `pkg install ollama` then `ollama serve &` is the expected route and several third-party
 guides describe it. Not verified by us on hardware. Expect: CPU or Vulkan inference, a 1-4 B model at a few tokens per second, a model download of 1-3 GB, and
-Android killing background processes under memory pressure. Rooting is optional and not needed by anything here (it would only help
+Android killing background processes under memory pressure. Nightage now manages this server itself (`agent/ollama_local.py`,
+`nightage ollama start|stop|status|list|pull|rm`, `nightage pull <model>`; autostart and stop-on-exit are the config keys `ollama.autostart` /
+`ollama.stop_on_exit`); the walkthrough is [TERMUX.md](TERMUX.md). Rooting is optional and not needed by anything here (it would only help
 with stopping the OOM killer and with `swapon`).
 
 ## What to try on a real phone
@@ -109,9 +111,9 @@ with stopping the OOM killer and with `swapon`).
 1. `sh install-termux.sh --dry-run`, then for real. Does `python -m venv` and the pip install of the five light dependencies work?
 2. `nightage --profile phone doctor`: platform row, RAM figure, storage row.
 3. Remote gateway over Tailscale: latency row and a chat.
-4. `pkg install ollama`, `ollama serve &`, `ollama pull qwen3.5:2b`: does it start, and is `qwen3.5:2b` usable with tools?
+4. `nightage ollama start`, `nightage pull qwen3.5:2b` (percent bar), then a chat: does the server start from Termux and survive a screen-off, and is `qwen3.5:2b` usable with tools? Does `nightage ollama status` show the server after Android killed it (phantom process killer)?
 5. Narrow screen (about 40-50 columns): `/help`, the home menu, a tool call, a long answer.
-6. Close the tool: `ollama ps` should be empty (`unload_on_exit`).
+6. Close the tool (/quit, Ctrl+C, closing the Termux session): `ollama ps` should be empty and the server stopped (`unload_on_exit`, `stop_on_exit`).
 
 ## Windows audit (UNVERIFIED on real Windows; what is proven here and what is not)
 

@@ -8,7 +8,6 @@ when two models happen to have the same size."""
 from __future__ import annotations
 
 import os
-import subprocess
 from typing import Any
 
 import typer
@@ -48,10 +47,9 @@ def _is_installed(tag: str, installed: set[str]) -> bool:
 
 
 def _pull(tag: str) -> int:
-    try:
-        return subprocess.call(["ollama", "pull", tag])
-    except OSError:
-        return 127
+    from agent.ollama_cli import do_pull
+
+    return do_pull(tag)
 
 
 def _mb(v: int | None) -> str:

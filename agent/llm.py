@@ -611,6 +611,20 @@ class OllamaClient:
         except httpx.HTTPError:
             return False
 
+    def _refuse_missing(self, model: str) -> None:
+        """Never send a request to a model the server just said it does not have: raise the same 404 Ollama would, locally and at once
+        (agent.friendly turns it into 'X is not installed. next: ...'). Only acts on a fresh model list; see modelpick.known_missing."""
+        try:
+            from agent import modelpick
+
+            missing = modelpick.known_missing(str(self._client.base_url), model)
+        except Exception:  # noqa: BLE001 - a guard must never be the thing that breaks a run
+            return
+        if missing:
+            req = httpx.Request("POST", str(self._client.base_url).rstrip("/") + "/api/chat")
+            raise httpx.HTTPStatusError(f"model '{model}' not found", request=req,
+                                        response=httpx.Response(404, json={"error": f"model '{model}' not found"}, request=req))
+
     def _client_for(self, model: str) -> httpx.Client:
         """The HTTP client that should serve `model`.
 
@@ -619,6 +633,7 @@ class OllamaClient:
         unloaded - and the other way round when a normal model is used next.
         The embedding model runs with num_gpu 0 (no VRAM) and never goes through
         here, so it is never evicted."""
+        self._refuse_missing(model)
         if wants_vulkan(model) and self._ensure_vulkan_server():
             for name in self._resident_in_vram(self._client):
                 self._unload_on(self._client, name)

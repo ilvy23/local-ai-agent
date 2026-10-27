@@ -18,12 +18,15 @@ See the module docstring of each emitter in agent/tui.py (`_execute_tool`, `_run
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from agent.ui.events import UiEvent
+
+logger = logging.getLogger(__name__)
 
 TOOL_RESULT_CAP = 20_000   # characters of a tool result carried in a tool_result event
 
@@ -302,6 +305,9 @@ def run_chat_turn(
             emit(event)
 
     ctl.emit = _tap
+    problem = getattr(s.distiller, "take_problem", lambda: "")() if s.distiller is not None else ""
+    if problem and isinstance(problem, str):
+        ctl.event("log", text=problem)
     try:
         reply, tools_used = run_agent_turn_engine(
             s.client, s.config, s.store, s.session_id, s.registry, messages, s.persona_name,
@@ -311,8 +317,13 @@ def run_chat_turn(
         if tui._LAST_EDITED and s.active_project is not None:
             s.active_project.set_from(tui._LAST_EDITED[0])
     except httpx.HTTPError as exc:
-        text = tui._http_error_message(exc)
-        ctl.event("error", message=str(text), code="http")
+        from agent import friendly
+
+        line, hint = friendly.explain(exc, s.model)
+        text = line
+        logger.warning("chat turn failed: %r", exc)
+        if not getattr(exc, "_nightage_reported", False):
+            ctl.event("error", message=line, code="http", next=hint)
         ctl.event("done", reply="", interrupted=False, tools=[], error="http")
         return TurnResult(None, error=str(text), usage=usage, seconds=time.monotonic() - t0)
 

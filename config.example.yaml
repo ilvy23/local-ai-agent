@@ -66,6 +66,10 @@ ollama:
   unload_on_exit: true
   # Remote gateway: the Ollama on another machine, e.g. a desktop PC on your network or VPN (192.0.2.10:11434). OLLAMA_HOST wins over this.
   host: ''
+  # Start Ollama in the background when chat/code/research/web begins and nothing answers on this machine (needs the ollama program;
+  # never when host points elsewhere). Stop it again on exit - only a server Nightage started itself is ever stopped.
+  autostart: true
+  stop_on_exit: true
 ui:
   wait_label: thinking
   live: true

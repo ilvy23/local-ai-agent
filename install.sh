@@ -389,6 +389,10 @@ if [ "$TERMUX" = 1 ]; then
       set --
       [ "$YES" = 1 ] && set -- --yes
       [ "$DRY" = 1 ] && set -- "$@" --dry-run
+      [ "$NO_OLLAMA" = 1 ] && set -- "$@" --no-ollama
+      [ -n "$MODEL_OVERRIDE" ] && set -- "$@" --model "$MODEL_OVERRIDE"
+      [ -n "$EMBED_OVERRIDE" ] && set -- "$@" --embed "$EMBED_OVERRIDE"
+      [ "$NO_EMBED" = 1 ] && set -- "$@" --no-embed
       run sh "$SD/install-termux.sh" "$@"
       exit $?
     fi
@@ -408,6 +412,10 @@ if [ "$TERMUX" = 1 ]; then
     set --
     [ "$YES" = 1 ] && set -- --yes
     [ "$DRY" = 1 ] && set -- "$@" --dry-run
+    [ "$NO_OLLAMA" = 1 ] && set -- "$@" --no-ollama
+    [ -n "$MODEL_OVERRIDE" ] && set -- "$@" --model "$MODEL_OVERRIDE"
+    [ -n "$EMBED_OVERRIDE" ] && set -- "$@" --embed "$EMBED_OVERRIDE"
+    [ "$NO_EMBED" = 1 ] && set -- "$@" --no-embed
     run sh "$TSRC/install-termux.sh" "$@"
     exit $?
   fi
@@ -552,7 +560,7 @@ fi
 # ---- 6. model
 step "The AI model"
 if [ "$NO_MODEL" = 1 ]; then
-  info "Skipped (--no-model). Pick one later with: ollama pull <name>   then   nightage settings set chat_model <name>"
+  info "Skipped (--no-model). Pick one later with: ollama pull <name>   then   nightage models use <name>"
 else
   pick_model "$RAM" "$GPU_VRAM_MB"
   MODEL="$PM_MODEL"; MSIZE="$PM_SIZE"
@@ -561,7 +569,7 @@ else
   else info "For this computer (about $(human_size "$PM_BUDGET") usable for a model, from $PM_SRC) the best fit is: $MODEL  (download about $(human_size "$MSIZE"))"; fi
   if [ "$NO_OLLAMA" = 1 ] || { ! have ollama && [ "$DRY" != 1 ]; }; then
     info "Ollama is not available here, so nothing is downloaded now. Run this installer again once Ollama is installed,"
-    info "or later:  ollama pull $MODEL   then   nightage settings set chat_model $MODEL"
+    info "or later:  ollama pull $MODEL   then   nightage models use $MODEL"
   else
     if [ "$DRY" != 1 ] && ollama list 2>/dev/null | awk 'NR>1{print $1}' | grep -qxF "$MODEL"; then
       ok "$MODEL is already downloaded"
@@ -574,8 +582,9 @@ else
       fi
     fi
     if [ "$DRY" = 1 ] || ollama list 2>/dev/null | awk 'NR>1{print $1}' | grep -qxF "$MODEL"; then
-      if ask "Tell Nightage to use $MODEL for chat?" y; then
-        run "$NBIN" settings set chat_model "$MODEL" || warn "Could not save it now; run later:  nightage settings set chat_model $MODEL"
+      if ask "Tell Nightage to use $MODEL for everything (chat, code, notes)?" y; then
+        # only for a model that really is downloaded (checked above); `models use` refuses one that is not. Otherwise the roles stay "auto".
+        run "$NBIN" models use "$MODEL" --yes || warn "Could not save it now; run later:  nightage models use $MODEL"
       fi
     fi
     # the memory model: recall by meaning instead of by keywords (Nightage works without it)

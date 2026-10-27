@@ -35,8 +35,8 @@ def server(ctx: Context):
         return fail(f"remote server {oll.url} not reachable" + (f" ({oll.error})" if oll.error else ""),
                     "Is the other machine on, and Tailscale up on both? On it, Ollama must listen on the network (OLLAMA_HOST=0.0.0.0).")
     return fail("not running" + (f" ({oll.error})" if oll.error else ""),
-                "Start it with `ollama serve` (install from https://ollama.com if the command is missing; on Termux: `pkg install ollama`, "
-                "or point `ollama.host` at another machine).")
+                "Start it with `ollama serve` or `nightage ollama start` (it also starts by itself when a chat begins, unless `ollama.autostart` is off). If the `ollama` command is "
+                "missing, install it from https://ollama.com; on Termux: `pkg install ollama`; or point `ollama.host` at another machine.")
 
 
 @check("remote_latency", "ollama", "Remote Ollama latency", core=True, timeout=12)

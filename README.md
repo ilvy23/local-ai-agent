@@ -119,6 +119,7 @@ curl -LsSf https://raw.githubusercontent.com/ilvy23/local-ai-agent/main/install.
 ```
 
 Then type **`nightage`**. (`nightage demo` shows what it looks like without any AI model.)
+On a phone, the models can run on the phone itself: [step-by-step guide](docs/TERMUX.md).
 
 Prefer to read it first? Download it, look at it, then run it: `curl -LsSf <url> -o install.sh`, `less install.sh`, `sh install.sh`
 (Windows: `irm <url> -OutFile install.ps1`, `notepad install.ps1`, `powershell -ExecutionPolicy Bypass -File install.ps1`).

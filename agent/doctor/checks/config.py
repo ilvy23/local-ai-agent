@@ -141,3 +141,40 @@ def profile(ctx: Context):
     return ok(name + (" (experimental)" if name == profiles.PHONE else ""))
 
 
+
+
+@check("config.roles", "config", "Models per role", requires=())
+def models_per_role(ctx: Context):
+    """Which config.yaml is loaded, and for every role: from the file, a default, or chosen automatically from the installed models."""
+    from agent import config as cfgmod
+    from agent import modelpick
+    from agent.doctor.core import Result
+
+    path, parsed, err = ctx.raw_config
+    if err and err != "missing":
+        return None
+    dm = cfgmod.DEFAULT_CONFIG["models"]
+    file_models = ((parsed or {}).get("models") if isinstance(parsed, dict) else None) or {}
+    user = {k for k, v in file_models.items() if v and str(v).strip().lower() != cfgmod.AUTO and v != dm.get(k)}
+    merged = {**dm, **{k: v for k, v in file_models.items() if v and str(v).strip().lower() != cfgmod.AUTO}}
+    oll = ctx.ollama
+    inst = dict(oll.models) if oll.reachable else None
+    res = modelpick.resolve(merged, user, inst, ram_mb=ctx.sysinfo.ram_total_mb, url=None)
+    lines = []
+    for role in modelpick.ALL_ROLES:
+        p = res.roles.get(role)
+        if p and p.model:
+            lines.append(f"{role}: {p.model} ({'in the file' if p.source == 'config' else 'chosen from the installed models' if p.source == 'auto' else 'default'}"
+                         f"{'' if p.installed in (True, None) else ', NOT installed'})")
+    out = f"{path} - " + ("file exists" if err != "missing" else "file does not exist yet")
+    r = Result("info", out, id="config.roles", title="Models per role")
+    r.lines = lines
+    if res.ask and inst:
+        role, missing = res.ask[0]
+        others = [n for n in res.chat_names if n != missing]
+        if others:
+            r = Result("warn", f"{role}: {missing} is set in {path} but is not installed, and {others[0]} is",
+                       f"Run `nightage models use {others[0]}` (or `nightage pull {missing}`). Editing a different config.yaml than the one above has no effect.",
+                       id="config.roles", title="Models per role")
+            r.lines = lines
+    return r

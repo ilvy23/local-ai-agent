@@ -133,8 +133,9 @@ You can also install Ollama yourself from https://ollama.com/download and run th
 
 ### Termux (Android)
 
-`install.sh` detects Termux and runs `install-termux.sh` (lighter: no compiled packages). Read [TERMUX.md](TERMUX.md); it is **UNVERIFIED**
-on real phones. A phone usually does better talking to Ollama on your PC (`ollama.host` in the settings).
+`install.sh` detects Termux and runs `install-termux.sh` (lighter: no compiled packages): a quiet, width-aware installer with one percent bar
+that can also install Ollama and download the models on the phone. Follow the step-by-step guide [TERMUX.md](TERMUX.md); it is **UNVERIFIED**
+on real phones. A phone under 6 GB of RAM usually does better talking to Ollama on your PC (`ollama.host` in the settings).
 
 ## Troubleshooting
 
@@ -164,8 +165,13 @@ without it follow the "no sudo" manual steps the installer prints, or use an Oll
 others: `ollama serve`), then run the installer again. Check with `ollama list`.
 
 **The model is too big for my RAM.** The installer picks by your memory (half of RAM, or 90% of GPU memory). If it is still too slow or the
-computer freezes, choose a smaller one: `ollama pull qwen3.5:2b` then `nightage settings set chat_model qwen3.5:2b`.
+computer freezes, choose a smaller one: `ollama pull qwen3.5:2b` then `nightage models use qwen3.5:2b`.
 `nightage doctor --deep` measures speed and recommends a model.
+
+**Which model does Nightage use?** You never have to edit `config.yaml`. Fresh installs leave every model role on `auto` (the models that are
+installed); `nightage models` lists each role, `nightage models use <model>` changes all chat roles at once, `nightage models embed <model>`
+the memory model. When nothing is installed, the first `nightage chat` offers the recommended model for your computer (with its size),
+downloads it with a percent bar and starts. `nightage doctor` shows which `config.yaml` is loaded and warns when it names a model you do not have.
 
 **Unicode boxes look broken / question marks.** Use Windows Terminal, or set `NO_COLOR=1` (also switches to plain ASCII drawing).
 

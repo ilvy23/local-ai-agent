@@ -84,7 +84,7 @@ def phone_overlay(info: sysinfo.SysInfo | None = None, *, remote: bool = False) 
     ctx = ctx_ceiling(info.ram_total_mb, remote)
     overlay: dict[str, Any] = {
         "models": {"max_ctx_ceiling": ctx, "chat_num_ctx": ctx},
-        "ollama": {"unload_on_exit": True, "keep_alive": "5m"},
+        "ollama": {"unload_on_exit": True, "keep_alive": "5m", "autostart": True, "stop_on_exit": True},   # frees the phone's RAM when you leave
         "memory": {"recall_k": 3, "context_char_budget": min(24000, ctx * 2)},
         "tools": {"max_iterations": 20, "disabled": list(PHONE_DISABLED_TOOLS)},
         "ui": {"mood_emotes": False, "live": True},

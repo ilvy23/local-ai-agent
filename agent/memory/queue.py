@@ -180,12 +180,26 @@ def learn_one(store: Store, vectors: VectorIndex, llm: Any, config: dict[str, An
     return True
 
 
+def _background_model_missing(llm: Any, config: dict[str, Any]) -> bool:
+    """True when a fresh model list says the background (notes) model is not installed. Never raises, never blocks."""
+    try:
+        from agent import modelpick
+
+        client = getattr(llm, "_client", None)
+        base = str(getattr(client, "base_url", "") or "")
+        return bool(base) and modelpick.known_missing(base, str((config.get("models") or {}).get("background") or ""))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def step(db_path: Path | str, llm: Any, config: dict[str, Any], *, active_session: int | None = None) -> bool:
     """One unit of work on a fresh connection (a Store belongs to the thread that made it). True = did something.
 
     The chat's own session waits until `memory.distill_every_turns` user messages are pending; older sessions
     (the catch-up) go at once."""
     every = settings(config)["every_turns"]
+    if _background_model_missing(llm, config):
+        return False                          # the notes model is not installed: leave the work queued instead of failing at every try
     with Store(Path(db_path)) as store:
         pend = pending_by_session(store.conn)
         for sid, n in pend.items():
@@ -267,6 +281,20 @@ class BackgroundDistiller:
         self.in_flight = False
         self.errors = 0
         self.steps = 0
+        self._problem = ""
+
+    def take_problem(self) -> str:
+        """The one-line note about a failed background save, ONCE per session (then ''): the chat shows it between turns."""
+        line, self._problem = self._problem, ""
+        return line
+
+    def _failed(self, exc: Exception) -> None:
+        logger.warning("background fact extraction failed (will retry): %s", exc)
+        from agent import friendly
+
+        if friendly.once("memory-extract-failed"):
+            line, _hint = friendly.explain(exc, str((self.config.get("models") or {}).get("background") or ""))
+            self._problem = f"Saving notes in the background failed: {line} It will retry quietly. Details: nightage doctor"
 
     def start(self) -> "BackgroundDistiller":
         if self._thread is None:
@@ -315,7 +343,7 @@ class BackgroundDistiller:
                     did = step(self.db_path, self.llm, self.config, active_session=self.session_id)
                 except Exception as exc:  # noqa: BLE001 - remembering is a bonus; the queue keeps the work
                     self.errors += 1
-                    logger.warning("background fact extraction failed (will retry): %s", exc)
+                    self._failed(exc)
                     backoff = min(300.0, 30.0 * self.errors)
                     break
                 finally:

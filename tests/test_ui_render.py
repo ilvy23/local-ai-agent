@@ -288,3 +288,29 @@ def test_a_tool_call_between_thinking_makes_two_cards():
     r, buf = make(plain=True)
     feed(r, {"type": "thinking", "text": "one"}, *tool_events(), {"type": "thinking", "text": "two"}, {"type": "done", "reply": "x"})
     assert len(r.last_thinking()) == 2 and "/thinking show 2" in buf.getvalue()
+
+
+@pytest.mark.parametrize("plain", [False, True])
+@pytest.mark.parametrize("width", [40, 54])
+def test_http_errors_render_as_one_friendly_line_without_markup_or_raw_text(plain, width):
+    import httpx
+
+    from agent import friendly
+
+    req = httpx.Request("POST", "http://localhost:11434/api/chat")
+    errs = [httpx.HTTPStatusError("Client error '404 Not Found' for url 'http://localhost:11434/api/chat'\nFor more information check: https://developer.mozilla.org/x",
+                                  request=req, response=httpx.Response(404, json={"error": "model 'qwen2.5:7b' not found"}, request=req)),
+            httpx.ConnectError("[Errno 111] Connection refused"), httpx.ReadTimeout("timed out"),
+            httpx.HTTPStatusError("boom", request=req, response=httpx.Response(500, json={"error": "llama runner crashed"}, request=req))]
+    for exc in errs:
+        r, buf = make(width=width, plain=plain)
+        line, hint = friendly.explain(exc)
+        feed(r, UiEvent("error", {"message": line, "next": hint, "code": "http"}))
+        out = buf.getvalue()
+        assert "[red]" not in out and "[/" not in out and "[dim]" not in out
+        for raw in ("Client error", "developer.mozilla", "api/chat", "Errno", "http://"):
+            assert raw not in out
+        assert "next:" in out and all(len(ln.rstrip()) <= width for ln in out.splitlines())
+    r, buf = make(width=width, plain=plain)
+    feed(r, UiEvent("error", {"message": friendly.explain(errs[0])[0]}))
+    assert "qwen2.5:7b is not installed" in " ".join(buf.getvalue().split())

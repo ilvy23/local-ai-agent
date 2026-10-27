@@ -33,7 +33,7 @@ from agent.ui.doctor import OllamaInfo, Probes, model_installed
 
 VERSION = "0.2.0"
 _TOPIC_KEYS = frozenset({"whatsapp", "memory", "apps", "status", "codetools", "commands"})
-START_OLLAMA_HINT = "not running - start it with `ollama serve`"
+START_OLLAMA_HINT = "not running - `ollama serve` or `nightage ollama start`"
 
 
 @dataclass
@@ -52,6 +52,7 @@ class Item:
 @dataclass
 class StatusInfo:
     ollama: OllamaInfo = field(default_factory=OllamaInfo)
+    ollama_ours: bool | None = None        # True: Nightage started the local server; False: external; None: remote/unknown
     chat_model: str = ""
     coding_model: str = ""
     chat_present: bool | None = None       # None = unknown (Ollama down)
@@ -76,6 +77,14 @@ def collect_status(config: dict | None = None, probes: Probes | None = None) -> 
         st.ollama = p.ollama()
     except Exception:  # noqa: BLE001
         st.ollama = OllamaInfo(error="probe failed")
+    if st.ollama.reachable:
+        try:
+            from agent import ollama_local
+
+            if ollama_local.is_local(st.ollama.url or ollama_local.base_url(config)):
+                st.ollama_ours = ollama_local.read_record() is not None
+        except Exception:  # noqa: BLE001
+            pass
     if st.ollama.reachable:
         st.chat_present = model_installed(st.chat_model, st.ollama.models) if st.chat_model else None
         st.coding_present = model_installed(st.coding_model, st.ollama.models) if st.coding_model else None
@@ -129,12 +138,32 @@ def age_text(ts: str, now: datetime | None = None) -> str:
 # ----------------------------------------------------------------------------- pure rendering
 
 
+def _origin_note(st: "StatusInfo") -> str:
+    """' (started by nightage)' / ' (external)' for a local server; nothing for a remote one or when unknown."""
+    if st.ollama_ours is None:
+        return ""
+    return " (started by nightage)" if st.ollama_ours else " (external)"
+
+
 def status_lines(st: StatusInfo, width: int, plain: bool = False) -> list[tuple[str, str, str]]:
     """[(label, value, level)] where level is ok | warn | fail | '' - rendered by `render_home`."""
     out: list[tuple[str, str, str]] = []
     o = st.ollama
-    if o.reachable:
-        out.append(("Ollama", f"running {o.version}".strip() + f", {len(o.models)} model(s)", "ok"))
+    phone = False
+    try:
+        from agent import sysinfo
+
+        phone = sysinfo.current().is_termux
+    except Exception:  # noqa: BLE001
+        pass
+    if phone and not o.reachable:
+        out.append(("Ollama on this phone", "not running - start it with `nightage ollama start`", "fail"))
+        for role, name in (("Chat", st.chat_model), ("Code", st.coding_model)):
+            if name:
+                out.append((role, name, ""))
+    elif o.reachable:
+        out.append(("Ollama on this phone" if phone else "Ollama",
+                    f"running {o.version}".strip() + f", {len(o.models)} model(s)" + _origin_note(st), "ok"))
         for role, name, present in (("Chat", st.chat_model, st.chat_present), ("Code", st.coding_model, st.coding_present)):
             if not name:
                 continue
@@ -303,6 +332,9 @@ def run_home(config: dict | None = None, *, input: Any = None, output: Any = Non
              width: int | None = None) -> HomeChoice:
     """Show the home screen and return the user's choice. Never blocks on a missing Ollama (probes time out in
     ~1.5 s). With a non-interactive stdin and no injected `input`, reads one line (number or name) instead."""
+    from agent import friendly
+
+    friendly.quiet_logging()
     plain = style.plain_mode() if plain is None else plain
     console = console or style.make_console(width=width, plain=plain)
     st = collect_status(config, probes)

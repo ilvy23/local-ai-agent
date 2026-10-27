@@ -61,7 +61,7 @@ def test_first_run_writes_plain_defaults_but_returns_overlay(tmp_path, monkeypat
     cfg, path = load(tmp_path)
     assert cfg["models"]["chat"] == "qwen3.5:2b"
     written = yaml.safe_load(path.read_text())
-    assert written["models"]["chat"] == cfgmod.DEFAULT_CONFIG["models"]["chat"] and written["profile"] == "default"
+    assert written["models"]["chat"] == "auto" and written["models"]["weekly"] == "" and written["profile"] == "default"
 
 
 def test_model_tiers_and_ctx_ceiling():
