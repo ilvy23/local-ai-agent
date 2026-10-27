@@ -1,0 +1,7 @@
+/* Shared by the Projects, Code agent, Audit and Status screens (js/components/ops-ui.js). */
+.ops-meter { height: 6px; background: var(--color-raised-2); border-radius: 3px; overflow: hidden; }
+.ops-meter i { display: block; height: 100%; }
+.ops-cmd { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; padding: var(--space-2) var(--space-3); background: var(--color-surface); border-radius: var(--radius-lg); }
+.ops-cmd code { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: var(--fs-sm); overflow-wrap: anywhere; color: var(--color-text); }
+.ops-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: var(--row-pad) var(--space-3); background: var(--color-surface); border-radius: var(--radius-lg); }
+@media (max-width: 820px) { .ops-row .btn, .ops-cmd .btn { min-height: 44px; } }

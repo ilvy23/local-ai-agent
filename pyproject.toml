@@ -1,0 +1,59 @@
+[project]
+name = "agent"
+version = "0.2.0"
+description = "Fully-local AI agent"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "ilvy23" }]
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.15",
+    "rich>=13.9",
+    "pyyaml>=6.0",
+    "httpx>=0.28",
+    # Optional on Android/Termux (no wheels there; sys_platform is "android" on Python 3.13+, older Termux Pythons report "linux" - see
+    # install-termux.sh, which installs the light set by hand). Without them: vector memory falls back to keyword recall, the code
+    # agent skips its ruff lint / coverage gate. `pkg install ruff` gives Termux a ruff binary.
+    "sqlite-vec>=0.1.9; sys_platform != 'android'",
+    "ruff>=0.16.0; sys_platform != 'android'",
+    "coverage>=7.15.2; sys_platform != 'android'",
+    "prompt_toolkit>=3.0.43",
+]
+
+[project.scripts]
+nightage = "agent.main:app"
+lantern = "agent.main:app"   # legacy alias
+agent = "agent.main:app"   # alias, for anyone used to the old name
+
+[project.optional-dependencies]
+# Only for people who build pygame programs with the coding agent; the agent itself never imports it
+# (it is heavy and hard to build on Termux, so it is not in the base install).
+games = ["pygame-ce>=2.5.7"]
+
+[build-system]
+requires = ["uv_build>=0.11.26,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+]
+# Only needed on the always-on server hosting the web chat frontend, not the
+# home PC's terminal-only CLI install: `uv sync --group web` there.
+web = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "mutagen>=1.47",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: hits a real local Ollama; excluded by default",
+    "posix_only: needs a POSIX system (bash, pty, fcntl, /proc ...); skipped automatically on Windows",
+]
+addopts = "-m 'not integration'"
+testpaths = ["tests"]

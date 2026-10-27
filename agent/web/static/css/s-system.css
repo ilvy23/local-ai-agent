@@ -1,0 +1,17 @@
+/* Connection screen (design S-System). */
+.s-system { min-height: 100%; box-sizing: border-box; padding: var(--space-8) 64px; background: var(--color-bg); }
+.s-system-card { max-width: 440px; display: flex; flex-direction: column; gap: var(--space-3); }
+.s-system h2 { margin: 0; font-size: 30px; }
+.s-system-text { margin: 0; font-size: 16px; color: var(--color-text-2); }
+.s-system-foot { margin: 0; font-size: 12px; color: var(--color-text-3); }
+.s-system-chip { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; padding: 3px 10px; font-size: 12px; font-weight: 600; border: 1px solid color-mix(in srgb, currentColor 50%, transparent); }
+.s-system-chip.dashed { border-style: dashed; }
+.s-system-form { display: flex; flex-direction: column; gap: var(--space-3); }
+.s-system-fields { display: flex; flex-direction: column; gap: var(--space-2); }
+.s-system-in { font-family: var(--font-mono); min-height: 44px; }
+.s-system-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.s-system-btn { min-height: 48px; }
+.s-system-actions .btn-primary { padding-inline: 24px; }
+.s-system-err { display: flex; gap: 6px; align-items: center; color: var(--danger); font-size: 13px; margin-top: 4px; }
+.s-system-btn:disabled { opacity: .6; cursor: default; }
+@media (max-width: 820px) { .s-system { padding: var(--space-8) 20px; } }

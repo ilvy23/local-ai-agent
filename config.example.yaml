@@ -1,0 +1,103 @@
+# Example config.yaml - copy to config.yaml and adjust.
+# config.yaml itself is gitignored (it fills in with real local values on first run,
+# see agent/config.py), so this file is what new users and the public repo ship instead.
+# default | phone (experimental overlay for small devices, see docs/PORTABILITY.md). `nightage --profile phone` for one run.
+profile: default
+models:
+  chat: qwen2.5:7b            # must support tool calling (`ollama show <model>` lists "tools")
+  background: qwen2.5:7b
+  embed: bge-m3
+  unrestricted: qwen2.5:7b    # only used by the optional WhatsApp analysis module
+  weekly: ''
+  chat_num_ctx: 16384
+  coding: deepseek-r1:7b
+  reasoning: deepseek-r1:7b
+  fallback: qwen3.5:9b
+  main: qwen3.5:9b
+  orchestrator: qwen3.5:9b
+  # Ceiling for the automatic per-model context budget (agent/ctxbudget.py). AGENT_CTX_CEILING
+  # (or the legacy AGENT_MAX_QWEN_CTX) overrides this at runtime.
+  max_ctx_ceiling: 32768
+  # Per-model num_ctx overrides that always win over the automatic budget, e.g.:
+  # overrides:
+  #   qwen2.5:7b: {num_ctx: 32768}
+  overrides: {}
+coding:
+  diagnose_first: true
+  executor:
+    max_repair_attempts: 4
+    model: qwen2.5-coder:7b
+  escalation:
+    tier3_enabled: false
+    tier3_model: qwen3-coder:30b
+    total_budget_seconds: 300
+  sandbox:
+    timeout_seconds: 30
+    memory_mb: 2048
+  auto_commit: true
+  budget:
+    max_actions: 100
+    max_seconds: 3600
+    max_tokens: 100000
+  build:
+    effort: max
+  prose_model: ''             # optional second text model for graphic passages; empty = off
+whatsapp:
+  min_messages: 5
+  bridge_url: http://127.0.0.1:8765
+  token_file: ~/.config/agent/plugins/whatsapp/bridge/bridge-token.txt
+  summarize_batch: 200
+  profile_max_messages: 400
+  auto_reply:
+    mode: 'off'
+persona:
+  name: ''
+  style: "You are Agent, a warm and friendly agent who chats like a supportive friend:\
+    \ casual, honest, and curious. Give thorough, detailed answers \u2014 explain\
+    \ your reasoning, add useful context and examples, and cover the relevant angles\
+    \ rather than one-liners. Structure longer answers with short paragraphs or bullet\
+    \ points when it helps. Stay natural, not padded: be detailed because the content\
+    \ earns it, and match a quick reply to a quick question."
+data:
+  db_path: data/agent.db
+ollama:
+  unload_on_exit: true
+  # Remote gateway: the Ollama on another machine, e.g. a desktop PC on your network or VPN (192.0.2.10:11434). OLLAMA_HOST wins over this.
+  host: ''
+ui:
+  wait_label: thinking
+  live: true
+  allow_html_blocks: false
+  mood_emotes: true
+  mood_map: {}
+memory:
+  recall_k: 6
+  recall_min_similarity: 0.55
+  context_char_budget: 24000
+  reverify_assumed_after_hours: 24
+tools:
+  max_iterations: 60
+autonomy:
+  web_lookup: true
+  max_lookups_per_turn: 3
+  verify: true
+  verify_retries: 2
+  plan: true
+safety:
+  safe_commands: []
+  blocked_patterns: []
+  max_timeout_s: 300
+background:
+  pause_on_game: true
+  max_gpu_percent: 40
+  max_cpu_percent: 50
+  max_ram_gb: 8
+curator:
+  max_failure_ratio: 0.7
+  max_age_days: 90
+  run_every_days: 7
+budget:
+  max_actions: 50
+  max_seconds: 1800
+  max_tokens: 50000
+goal_restatement_every_n_actions: 10

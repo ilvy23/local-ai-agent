@@ -1,0 +1,10 @@
+{
+  "name": "Nightage",
+  "short_name": "Nightage",
+  "description": "A private assistant that runs on your own PC.",
+  "display": "standalone",
+  "start_url": "/",
+  "background_color": "#0a0a0d",
+  "theme_color": "#0a0a0d",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

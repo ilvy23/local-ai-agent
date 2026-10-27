@@ -1,0 +1,5 @@
+name = "dev-notes"
+version = "1.0.0"
+description = "/devnote saves a line to a notes file; /devnotes shows them; counts finished turns with a hook."
+author = "nightage"
+min_nightage = "0.1.0"

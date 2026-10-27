@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TERM: xterm            # curses/prompt_toolkit tests need a real terminfo entry
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --python ${{ matrix.python-version }}
+
+      # The default suite excludes the `integration` marker, so no Ollama is
+      # needed in CI.
+      - name: Run tests
+        run: uv run --python ${{ matrix.python-version }} pytest -q
+
+      - name: Smoke-test the CLI
+        run: |
+          uv run --python ${{ matrix.python-version }} nightage --help
+          uv run --python ${{ matrix.python-version }} nightage demo --help
+
+  # Does a plain `pip install` work, and do the core commands run, on every OS we promise? (Windows and macOS are
+  # new here: if this job is red there, that is the real signal. The full suite stays on Linux above.)
+  cross-platform:
+    name: install + smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      NIGHTAGE_NO_UPDATE_CHECK: "1"
+      NO_COLOR: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the package (pip, like a user without uv)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .
+          python -m pip install pytest
+
+      - name: Core commands
+        shell: bash
+        run: |
+          nightage --help
+          nightage version
+          nightage doctor --no-web --only system,python,packages
+          nightage demo --help
+
+      - name: Tests that need no POSIX tools
+        shell: bash
+        run: python -m pytest -q -p no:cacheprovider tests/test_windows_import.py tests/test_installers.py tests/test_brand.py tests/test_ui_style.py
+
+      - name: Guided installer, dry run (macOS / Linux)
+        if: runner.os != 'Windows'
+        run: sh install.sh --dry-run --yes --source .
+
+      - name: Guided installer, dry run (Windows PowerShell 5.1 and PowerShell 7)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -DryRun -Yes -Source .
+          pwsh -NoProfile -ExecutionPolicy Bypass -File install.ps1 -DryRun -Yes -Source .
+
+  # Lint the installers (no secrets, no network beyond installing the linters).
+  installer-lint:
+    name: lint installers
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shell syntax and shellcheck
+        run: |
+          sh -n install.sh
+          dash -n install.sh || true
+          sh -n install-termux.sh
+          shellcheck -s sh install.sh
+
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+          $r = Invoke-ScriptAnalyzer -Path install.ps1 -Severity Error,Warning -ExcludeRule PSAvoidUsingWriteHost,PSUseApprovedVerbs,PSUseShouldProcessForStateChangingFunctions
+          $r | Format-Table RuleName, Line, Message -AutoSize -Wrap
+          if ($r | Where-Object { $_.Severity -eq 'Error' }) { exit 1 }

@@ -1,0 +1,102 @@
+/* Lantern tokens v2 — black first, purple accent, round shapes (from the design handoff lantern-tokens-v2.css).
+   Dark is the default (:root and [data-theme="dark"]); light is [data-theme="light"]. Fonts are self-hosted by css/fonts.css.
+   Old token names used by earlier screens stay valid: see "Aliases" at the end of this file. */
+:root,[data-theme="dark"]{
+  color-scheme:dark;
+  /* surfaces + text */
+  --color-bg:#0a0a0d; --color-surface:#121217; --color-raised:#1a1a22; --color-raised-2:#23232d;
+  --color-text:#eceaf2; --color-text-2:#b4b1c2; --color-text-3:#8f8ca0;
+  --color-divider:rgba(255,255,255,.08); --color-hairline:rgba(255,255,255,.08);
+  --color-scrim:rgba(0,0,0,.66); --color-hl:rgba(167,139,250,.28);
+  /* accent: fill (white text ≥ 5.7:1), text (≥ 7:1 on bg), focus */
+  --color-accent:#7c3aed; --color-on-accent:#ffffff; --color-accent-text:#b79cfb; --color-focus:#a78bfa;
+  --color-accent-soft:rgba(139,92,246,.16); --color-accent-soft-2:rgba(139,92,246,.28);
+  --color-accent-2:#c4b5fd; --color-accent-2-text:#d8ccff;
+  --color-flame:#f5b942; --plate-blend:screen;
+  --color-accent-100:#2a1b52; --color-accent-200:#3b2578; --color-accent-300:#5b36b5; --color-accent-400:#b79cfb; --color-accent-500:#8b5cf6; --color-accent-600:#9770f8; --color-accent-700:#c4b5fd; --color-accent-800:#d8ccff; --color-accent-900:#efe9ff;
+  --color-accent-2-100:#26213d; --color-accent-2-200:#352d5a; --color-accent-2-300:#5a4d94; --color-accent-2-400:#9d8cdb; --color-accent-2-500:#c4b5fd; --color-accent-2-600:#d1c6fe; --color-accent-2-700:#ddd5ff; --color-accent-2-800:#e9e4ff; --color-accent-2-900:#f5f2ff;
+  --color-neutral-100:#1a1a22; --color-neutral-200:#23232d; --color-neutral-300:#2f2f3b; --color-neutral-400:#4a4958; --color-neutral-500:#6c6a7d; --color-neutral-600:#8f8ca0; --color-neutral-700:#b4b1c2; --color-neutral-800:#d3d0de; --color-neutral-900:#eceaf2;
+  /* semantic pairs — fg on bg ≥ 4.5:1. Always icon + word. info is cyan, never purple. */
+  --ok:#6ee7a0; --ok-bg:#0d2619; --info:#67d4f2; --info-bg:#0a2733; --warn:#fbbf24; --warn-bg:#2e2306;
+  --danger:#fb7185; --danger-bg:#33101a; --block:#c9c9d1; --block-bg:#26262e; --neutral:#a8a6b5; --neutral-bg:#1f1f27;
+  /* categorical series (6, colour-blind safe; always pair with dash + marker) */
+  --series-1:#a78bfa; --series-2:#38bdf8; --series-3:#fbbf24; --series-4:#34d399; --series-5:#fb7185; --series-6:#e2e8f0;
+  /* elevation */
+  --shadow-sm:0 1px 2px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.06);
+  --shadow-md:0 8px 24px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.08);
+  --shadow-lg:0 24px 60px rgba(0,0,0,.65),0 0 0 1px rgba(255,255,255,.1);
+  --glow-accent:0 0 0 1px rgba(139,92,246,.4),0 0 28px rgba(139,92,246,.28);
+}
+[data-theme="light"]{
+  color-scheme:light;
+  --color-bg:#f6f5fa; --color-surface:#ecebf3; --color-raised:#ffffff; --color-raised-2:#f2f1f8;
+  --color-text:#17151f; --color-text-2:#4b4860; --color-text-3:#615e76;
+  --color-divider:rgba(23,21,31,.12); --color-hairline:rgba(23,21,31,.1);
+  --color-scrim:rgba(23,21,31,.45); --color-hl:rgba(124,58,237,.18);
+  --color-accent:#6d28d9; --color-on-accent:#ffffff; --color-accent-text:#5b21b6; --color-focus:#7c3aed;
+  --color-accent-soft:rgba(109,40,217,.1); --color-accent-soft-2:rgba(109,40,217,.18);
+  --color-accent-2:#7c5cd6; --color-accent-2-text:#4c1d95;
+  --color-flame:#d98a00; --plate-blend:multiply;
+  --color-accent-100:#f3edff; --color-accent-200:#e4d9ff; --color-accent-300:#cdbaff; --color-accent-400:#a78bfa; --color-accent-500:#8b5cf6; --color-accent-600:#7c3aed; --color-accent-700:#6d28d9; --color-accent-800:#5b21b6; --color-accent-900:#3b1a7a;
+  --color-accent-2-100:#f5f3ff; --color-accent-2-200:#e9e4ff; --color-accent-2-300:#d4caf9; --color-accent-2-400:#b4a2ef; --color-accent-2-500:#7c5cd6; --color-accent-2-600:#6a49c4; --color-accent-2-700:#5a3aaa; --color-accent-2-800:#4c1d95; --color-accent-2-900:#2e1065;
+  --color-neutral-100:#ecebf3; --color-neutral-200:#dedce9; --color-neutral-300:#c6c4d6; --color-neutral-400:#a5a2b8; --color-neutral-500:#7f7c95; --color-neutral-600:#615e76; --color-neutral-700:#4b4860; --color-neutral-800:#2e2c3d; --color-neutral-900:#17151f;
+  --ok:#14633a; --ok-bg:#dcf3e6; --info:#0a6580; --info-bg:#d9f1f8; --warn:#7a4a00; --warn-bg:#fdebc0;
+  --danger:#a3123a; --danger-bg:#fde0e7; --block:#2e2e36; --block-bg:#dcdce2; --neutral:#50505e; --neutral-bg:#e6e5ec;
+  --series-1:#6d28d9; --series-2:#0369a1; --series-3:#b45309; --series-4:#047857; --series-5:#be123c; --series-6:#475569;
+  --shadow-sm:0 1px 2px rgba(23,21,31,.12),0 0 0 1px rgba(23,21,31,.06);
+  --shadow-md:0 8px 24px rgba(23,21,31,.14),0 0 0 1px rgba(23,21,31,.06);
+  --shadow-lg:0 24px 60px rgba(23,21,31,.2),0 0 0 1px rgba(23,21,31,.08);
+  --glow-accent:0 0 0 1px rgba(109,40,217,.35),0 0 20px rgba(109,40,217,.16);
+}
+:root{
+  /* type */
+  --font-heading:"Source Serif 4",Georgia,serif; --font-body:"Source Serif 4",Georgia,serif;
+  --font-mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+  --fs-2xs:11px; --fs-xs:12px; --fs-sm:13px; --fs-md:15px; --fs-lg:17px; --fs-xl:20px; --fs-2xl:25px; --fs-3xl:32px; --fs-mono:13px;
+  --lh-tight:1.15; --lh-body:1.55;
+  /* space (airy 1.25× scale, a little more padding for round shapes) */
+  --space-1:5px; --space-2:10px; --space-3:15px; --space-4:20px; --space-6:30px; --space-8:40px; --space-12:60px;
+  --row-pad:11px; --hit:38px;
+  /* radius */
+  --radius-sm:10px; --radius-md:14px; --radius-lg:18px; --radius-xl:26px; --radius-control:12px; --radius-pill:999px;
+  /* motion */
+  --dur-instant:80ms; --dur-fast:140ms; --dur-base:220ms; --dur-slow:360ms; --ease:cubic-bezier(.2,.7,.2,1);
+}
+[data-density="compact"]{--row-pad:6px;--hit:32px}
+
+/* shared component shapes (Broadsheet classes, rounded) */
+.btn,.input,select.input,textarea.input{border-radius:var(--radius-control)}
+.btn-icon{border-radius:50%}
+.tag{border-radius:var(--radius-pill)}
+.seg{border-radius:var(--radius-control)}
+.card{border-radius:var(--radius-lg);box-shadow:var(--shadow-sm)}
+.dialog{border-radius:var(--radius-xl);box-shadow:var(--shadow-lg)}
+.btn-primary{background:var(--color-accent);color:var(--color-on-accent)}
+
+@keyframes l-dots{0%,100%{opacity:.2}50%{opacity:1}}
+@keyframes l-shimmer{0%{background-position:-200px 0}100%{background-position:200px 0}}
+@keyframes l-pulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ok) 45%,transparent)}50%{box-shadow:0 0 0 5px transparent}}
+@keyframes l-caret{0%,49%{opacity:1}50%,100%{opacity:0}}
+@keyframes l-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes l-reg-c{0%,100%{transform:translate(-2px,-1px)}50%{transform:translate(0,0)}}
+@keyframes l-reg-m{0%,100%{transform:translate(2px,1px)}50%{transform:translate(0,0)}}
+@keyframes l-reg-y{0%,100%{transform:translate(1px,-2px)}50%{transform:translate(0,0)}}
+@keyframes l-bar{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}
+@keyframes l-spin{to{transform:rotate(360deg)}}
+@keyframes l-fade{0%,100%{opacity:.2}50%{opacity:1}}
+@keyframes l-ray{0%,100%{opacity:.25;transform:scaleY(.7)}50%{opacity:1;transform:scaleY(1)}}
+@keyframes l-sheen{0%{background-position:200% 0}100%{background-position:-200% 0}}
+@keyframes l-breathe{0%,100%{transform:scale(.92);opacity:.7}50%{transform:scale(1.06);opacity:1}}
+@keyframes l-line{0%,100%{opacity:.35;transform:scaleX(.6)}50%{opacity:.9;transform:scaleX(1)}}
+@media (prefers-reduced-motion:reduce){
+  [style*="animation"]{animation:none!important}
+  *{transition-duration:.01ms!important;scroll-behavior:auto!important}
+}
+a{color:var(--color-accent-text)} a:hover{color:var(--color-accent-2-text)}
+body{background:var(--color-bg);color:var(--color-text)}
+
+/* Aliases — names the application CSS grew up with, mapped onto the v2 set (do not remove: screens use them). */
+:root {
+  --color-process-yellow: var(--color-flame);
+  --font-heading-weight: 600;
+}

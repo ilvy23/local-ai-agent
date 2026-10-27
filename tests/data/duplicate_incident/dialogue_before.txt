@@ -1,0 +1,230 @@
+# dialogue.py - choice-based dialogue trees for the harbour town NPCs (Ella and Orin).
+# Each tree has at least 3 nodes. Every choice sets a flag and/or shifts trust / mood,
+# and the NPC's opening line depends on the current chapter.
+#
+# Node format:
+#   {"id": str, "text": str, "choices": [(label, next_id_or_None, effects), ...]}
+#   effects = {"flag": str, "trust": int, "mood": int, "learned": str}
+#   next_id None = end of conversation.
+
+from typing import Dict, List, Optional
+
+import context
+import story
+from engine import render
+
+NL = "\n"
+
+
+def J(lines):
+    return NL.join(lines)
+
+
+
+# ======================================================================
+# ORIN - the ferryman.
+# ======================================================================
+
+ORIN_CHAPTER: Dict[int, str] = {
+    1: J([
+        "  The ferryman says hello on day 1 of the orin story and means it.",
+        "  The tide table for day 1 is pinned to the orin door, as always.",
+        "  Nobody on the pier minds that orin repeats the weather twice.",
+    ]),
+    2: J([
+        "  The ferryman says hello on day 2 of the orin story and means it.",
+        "  The tide table for day 2 is pinned to the orin door, as always.",
+        "  Nobody on the pier minds that orin repeats the weather twice.",
+    ]),
+    3: J([
+        "  The ferryman says hello on day 3 of the orin story and means it.",
+        "  The tide table for day 3 is pinned to the orin door, as always.",
+        "  Nobody on the pier minds that orin repeats the weather twice.",
+    ]),
+    4: J([
+        "  The ferryman says hello on day 4 of the orin story and means it.",
+        "  The tide table for day 4 is pinned to the orin door, as always.",
+        "  Nobody on the pier minds that orin repeats the weather twice.",
+    ]),
+}
+
+ORIN_OPEN: Dict[str, str] = {
+    "calm": J([
+        "  orin looks up from the nets. It is a calm sort of morning.",
+        "  The kettle on the orin stove has been calm since dawn.",
+    ]),
+    "busy": J([
+        "  orin looks up from the nets. It is a busy sort of morning.",
+        "  The kettle on the orin stove has been busy since dawn.",
+    ]),
+    "tired": J([
+        "  orin looks up from the nets. It is a tired sort of morning.",
+        "  The kettle on the orin stove has been tired since dawn.",
+    ]),
+}
+
+ORIN_TREE: Dict[str, dict] = {
+    "orin_n1": {
+        "id": "orin_n1",
+        "text": "  Node 1: orin explains lock number 1 of the old canal and why it matters.",
+        "choices": [
+            ("Ask about lock 1", "orin_n2",
+             {"flag": "orin_lock1", "trust": 1, "mood": -1,
+               "learned": "lock 1 sticks in winter"}),
+            ("Say goodbye", None, {}),
+        ],
+    },
+    "orin_n2": {
+        "id": "orin_n2",
+        "text": "  Node 2: orin explains lock number 2 of the old canal and why it matters.",
+        "choices": [
+            ("Ask about lock 2", "orin_n3",
+             {"flag": "orin_lock2", "trust": 2, "mood": -2,
+               "learned": "lock 2 sticks in winter"}),
+            ("Say goodbye", None, {}),
+        ],
+    },
+    "orin_n3": {
+        "id": "orin_n3",
+        "text": "  Node 3: orin explains lock number 3 of the old canal and why it matters.",
+        "choices": [
+            ("Ask about lock 3", "orin_n4",
+             {"flag": "orin_lock3", "trust": 3, "mood": -3,
+               "learned": "lock 3 sticks in winter"}),
+            ("Say goodbye", None, {}),
+        ],
+    },
+    "orin_n4": {
+        "id": "orin_n4",
+        "text": "  Node 4: orin explains lock number 4 of the old canal and why it matters.",
+        "choices": [
+            ("Ask about lock 4", "orin_n5",
+             {"flag": "orin_lock4", "trust": 4, "mood": -4,
+               "learned": "lock 4 sticks in winter"}),
+            ("Say goodbye", None, {}),
+        ],
+    },
+    "orin_n5": {
+        "id": "orin_n5",
+        "text": "  Node 5: orin explains lock number 5 of the old canal and why it matters.",
+        "choices": [
+            ("Ask about lock 5", "orin_n1",
+             {"flag": "orin_lock5", "trust": 5, "mood": -5,
+               "learned": "lock 5 sticks in winter"}),
+            ("Say goodbye", None, {}),
+        ],
+    },
+}
+
+# ======================================================================
+# ELLA - the net mender.
+# ======================================================================
+
+ELLA_CHAPTER: Dict[int, str] = {
+    1: J([
+        "  The net mender says hello on day 1 of the ella story and means it.",
+        "  The tide table for day 1 is pinned to the ella door, as always.",
+        "  Nobody on the pier minds that ella repeats the weather twice.",
+    ]),
+    2: J([
+        "  The net mender says hello on day 2 of the ella story and means it.",
+        "  The tide table for day 2 is pinned to the ella door, as always.",
+        "  Nobody on the pier minds that ella repeats the weather twice.",
+    ]),
+    3: J([
+        "  The net mender says hello on day 3 of the ella story and means it.",
+        "  The tide table for day 3 is pinned to the ella door, as always.",
+        "  Nobody on the pier minds that ella repeats the weather twice.",
+    ]),
+    4: J([
+        "  The net mender says hello on day 4 of the ella story and means it.",
+        "  The tide table for day 4 is pinned to the ella door, as always.",
+        "  Nobody on the pier minds that ella repeats the weather twice.",
+    ]),
+}
+
+ELLA_OPEN: Dict[str, str] = {
+    "calm": J([
+        "  ella looks up from the nets. It is a calm sort of morning.",
+        "  The kettle on the ella stove has been calm since dawn.",
+    ]),
+    "busy": J([
+        "  ella looks up from the nets. It is a busy sort of morning.",
+        "  The kettle on the ella stove has been busy since dawn.",
+    ]),
+    "tired": J([
+        "  ella looks up from the nets. It is a tired sort of morning.",
+        "  The kettle on the ella stove has been tired since dawn.",
+    ]),
+}
+
+ELLA_TREE: Dict[str, dict] = {
+    "ella_n1": {
+        "id": "ella_n1",
+        "text": "  Node 1: ella explains lock number 1 of the old canal and why it matters.",
+        "choices": [
+            ("Ask about lock 1", "ella_n2",
+             {"flag": "ella_lock1", "trust": 1, "mood": -1,
+               "learned": "lock 1 sticks in winter"}),
+            ("Say goodbye", None, {}),
+        ],
+    },
+    "ella_n2": {
+        "id": "ella_n2",
+        "text": "  Node 2: ella explains lock number 2 of the old canal and why it matters.",
+        "choices": [
+            ("Ask about lock 2", "ella_n3",
+             {"flag": "ella_lock2", "trust": 2, "mood": -2,
+               "learned": "lock 2 sticks in winter"}),
+            ("Say goodbye", None, {}),
+        ],
+    },
+    "ella_n3": {
+        "id": "ella_n3",
+        "text": "  Node 3: ella explains lock number 3 of the old canal and why it matters.",
+        "choices": [
+            ("Ask about lock 3", "ella_n4",
+             {"flag": "ella_lock3", "trust": 3, "mood": -3,
+               "learned": "lock 3 sticks in winter"}),
+            ("Say goodbye", None, {}),
+        ],
+    },
+    "ella_n4": {
+        "id": "ella_n4",
+        "text": "  Node 4: ella explains lock number 4 of the old canal and why it matters.",
+        "choices": [
+            ("Ask about lock 4", "ella_n5",
+             {"flag": "ella_lock4", "trust": 4, "mood": -4,
+               "learned": "lock 4 sticks in winter"}),
+            ("Say goodbye", None, {}),
+        ],
+    },
+    "ella_n5": {
+        "id": "ella_n5",
+        "text": "  Node 5: ella explains lock number 5 of the old canal and why it matters.",
+        "choices": [
+            ("Ask about lock 5", "ella_n1",
+             {"flag": "ella_lock5", "trust": 5, "mood": -5,
+               "learned": "lock 5 sticks in winter"}),
+            ("Say goodbye", None, {}),
+        ],
+    },
+}
+
+
+TREES = {
+    "ella": ELLA_TREE,
+    "orin": ORIN_TREE,
+}
+
+
+def open_text(who: str, chapter: int) -> str:
+    table = {"ella": ELLA_CHAPTER, "orin": ORIN_CHAPTER}.get(who, {})
+    return table.get(chapter, "")
+
+
+def apply(state, effects: dict) -> None:
+    if effects.get("trust"):
+        state.trust_change(effects["trust"])
+    if effects.get("mood"):
+        state.mood_change(effects["mood"])

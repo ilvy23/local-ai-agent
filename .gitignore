@@ -1,0 +1,34 @@
+.superpowers/
+.venv/
+__pycache__/
+data/*
+!data/.gitkeep
+.gstack/
+
+# exported training trajectories (personal task data)
+data/trajectories/
+
+# real local config - has your actual model names, bridge token path, etc.
+# config.example.yaml is the template; config.yaml fills in with defaults on first run.
+config.yaml
+# laptop-only install target + its launcher/test-runner scratch scripts
+.venv-laptop/
+run_*_laptop.sh
+.venv*/
+venv/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.env
+*.db
+*.sqlite
+*.egg-info/
+build/
+dist/
+.idea/
+.vscode/
+.DS_Store
+deep_research/

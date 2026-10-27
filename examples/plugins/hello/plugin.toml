@@ -1,0 +1,5 @@
+name = "hello"
+version = "1.0.0"
+description = "The smallest possible plugin: one tool."
+author = "nightage"
+min_nightage = "0.1.0"

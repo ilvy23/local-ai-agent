@@ -1,0 +1,22 @@
+// Section constructors for the static view data (same names as the design's lantern-views.js). They only build plain objects;
+// js/viewkit.js renders them. Row flags in `f`: c = changed from default, r = restart required, p = PROPOSAL, e:text = error.
+export const R = (label, help, ctl, val, def, f, g) => ({ label, help, ctl, val, def: def == null ? '' : def, f: ((f || '') + ' ' + (g || '')).trim() });
+export const G = (title, rows, p) => ({ k: 'group', title, rows, p });
+export const B = (v, title, text, acts) => ({ k: 'banner', v, title, text, acts: acts || [] });
+export const J = (title, sub, pct, st, el, eta, log, acts, p) => ({ k: 'job', title, sub, pct, st, el, eta, log: log || [], acts: acts || ['Stop'], p });
+export const T = (title, cols, rows, acts, p) => ({ k: 'table', title, cols, rows, acts: acts || [], p });
+export const LD = (title, items, dt, drows, dacts, p) => ({ k: 'ld', title, items, detail: { title: dt, rows: drows, acts: dacts || [] }, p });
+export const C = (title, items, p) => ({ k: 'cards', title, items, p });
+export const LG = (title, lines) => ({ k: 'log', title, lines });
+export const W = (steps, active, fields, summary, p) => ({ k: 'wizard', steps, active, fields, summary, p });
+export const D = (title, text, word, btn) => ({ k: 'danger', title, text, word, btn });
+export const E = (title, text, cmd) => ({ k: 'empty', title, text, cmd });
+export const S = (tiles, title) => ({ k: 'stats', tiles, title });
+export const CV = (title, pts, sub) => ({ k: 'curve', title, pts, sub });
+export const F = (fields) => ({ k: 'filters', fields });
+export const A = (items) => ({ k: 'actions', items });
+export const TH = (mode, detail) => ({ k: 'think', mode, detail });
+export const BL = (kind) => ({ k: 'block', kind });
+export const BR = (title, items) => ({ k: 'bars', title, items });
+export const X = (title, text) => ({ k: 'text', title, text });
+export const tab = (k, l, s, needs) => ({ k, l, s, needs: needs || [] });

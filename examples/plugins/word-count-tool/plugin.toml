@@ -1,0 +1,5 @@
+name = "word-count-tool"
+version = "1.0.0"
+description = "Count the words, lines and characters of a text file (read-only)."
+author = "nightage"
+min_nightage = "0.1.0"
