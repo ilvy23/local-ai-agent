@@ -15,6 +15,18 @@ It chats, remembers, searches the web, and writes code — all against your own
 
 ---
 
+<div align="center">
+
+<img src="docs/media/demo.gif" alt="Nightage in the terminal: a prompt, a queued follow-up, an approval, a diff" width="760">
+
+<sub>A scripted demo run: the input stays active while the agent works, follow-ups are queued, every tool call and diff is visible, risky commands wait for your typed answer.</sub>
+
+| Start screen | Everything visible | On a phone-sized terminal |
+|:--:|:--:|:--:|
+| <img src="docs/media/home.png" width="320" alt="Start screen with live status"> | <img src="docs/media/run.png" width="320" alt="A finished run with plan, diff and verification"> | <img src="docs/media/phone.png" width="180" alt="The start screen at 44 columns"> |
+
+</div>
+
 ## The terminal UI in ten lines
 
 `nightage` opens a home screen; `nightage chat`, `nightage code`, `nightage research`, `nightage doctor` and

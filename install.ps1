@@ -538,7 +538,13 @@ if ($NoModel) {
                 if ($code -ne 0) { Warn ("Could not save it now; run later:  nightage settings set chat_model " + $chosen) }
             }
         }
-        Info "Optional, for better memory recall:  ollama pull bge-m3   (1.2 GB; without it Nightage falls back to keyword search)"
+        # the memory model: recall by meaning instead of by keywords (Nightage works without it)
+        $emb = "bge-m3"
+        if ((-not $DryRun) -and (Test-ModelInstalled $emb)) { Ok ($emb + " (the memory model) is already downloaded") }
+        elseif (Ask-User ("Also download the memory model " + $emb + " (about 1.2 GB)? It lets Nightage recall things by meaning, not just by keywords.") "y") {
+            $code = Invoke-Shown "ollama" @("pull", $emb)
+            if ($code -ne 0) { Warn ("Download failed. Later:  ollama pull " + $emb) }
+        } else { Info ("Skipped. Nightage still works and falls back to keyword search. Later:  ollama pull " + $emb) }
     }
 }
 

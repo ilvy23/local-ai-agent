@@ -486,7 +486,15 @@ else
         run "$NBIN" settings set chat_model "$MODEL" || warn "Could not save it now; run later:  nightage settings set chat_model $MODEL"
       fi
     fi
-    info "Optional, for better memory recall:  ollama pull bge-m3   (1.2 GB; without it Nightage falls back to keyword search)"
+    # the memory model: recall by meaning instead of by keywords (Nightage works without it)
+    EMB="bge-m3"
+    if [ "$DRY" != 1 ] && ollama list 2>/dev/null | awk 'NR>1{print $1}' | grep -qE "^$EMB(:|$)"; then
+      ok "$EMB (the memory model) is already downloaded"
+    elif ask "Also download the memory model $EMB (about 1.2 GB)? It lets Nightage recall things by meaning, not just by keywords." y; then
+      run ollama pull "$EMB" || warn "Download failed. Later:  ollama pull $EMB"
+    else
+      info "Skipped. Nightage still works and falls back to keyword search. Later:  ollama pull $EMB"
+    fi
   fi
 fi
 
