@@ -52,7 +52,12 @@ def _final_screen(raw: str) -> str:
 
 
 def render(renderable, width, plain=True) -> str:
-    """Print a renderable on a pipe console `width` columns wide and return the final screen text."""
+    """Print a renderable on a pipe console `width` columns wide and return the final screen text.
+
+    Console.size only honours an explicit `width` when `height` is *also* given (rich falls
+    back to real-terminal detection - 80 columns here - otherwise); without this a width=100
+    request silently rendered at 80 and only showed up once content got longer than that."""
     buf = io.StringIO()
-    Console(file=buf, width=width, force_terminal=not plain, color_system=None if plain else "standard", highlight=False).print(renderable)
+    Console(file=buf, width=width, height=1000, force_terminal=not plain,
+            color_system=None if plain else "standard", highlight=False).print(renderable)
     return _final_screen(buf.getvalue())

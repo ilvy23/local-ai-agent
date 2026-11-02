@@ -22,6 +22,10 @@ CHILD = textwrap.dedent('''
     import importlib, importlib.abc, os, pkgutil, sys, tempfile
     # third-party first, under the real platform
     import typer, typer.testing, rich.console, rich.live, rich.markdown, rich.table, prompt_toolkit, prompt_toolkit.application, httpx, yaml
+    try:
+        import fastapi, starlette, uvicorn   # optional 'web' group; agent.web.app needs them loaded before the platform flip too
+    except ImportError:
+        pass
     import sqlite3, asyncio, subprocess, shutil, logging, json
     BLOCK = {"fcntl", "termios", "pty", "pwd", "grp", "resource", "curses", "_curses", "tty"}
     class Blocker(importlib.abc.MetaPathFinder):

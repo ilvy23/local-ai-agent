@@ -40,9 +40,21 @@ def _isolated_gpu_choice(monkeypatch, tmp_path):
     Without this, a CLI test runs the start-of-run GPU question non-interactively, which
     reuses the *real* last answer from ~/.local/state/agent/gpu_mode (e.g. "dual") for the
     rest of the process - and later tests would then try to start the real Vulkan Ollama
-    through `ollama-vk` (a 90 s wait, and a real server on a real GPU)."""
+    through `ollama-vk` (a 90 s wait, and a real server on a real GPU).
+
+    Also neutralises real GPU detection for the no-args production call (`detect_gpus()`,
+    from `auto_mode`/`sysinfo`/`ctxbudget`): on a machine with ≥2 real Vulkan-capable GPUs it
+    would otherwise find them for real and route *every* model to Vulkan regardless of
+    AGENT_VULKAN_MODELS - exactly the "developer's real GPU choice" this fixture exists to
+    hide. `detect_gpus(drm_root=...)` - how the dedicated detection tests call it - still
+    runs for real against their fake sysfs; only a test that patches `detect_gpus` itself
+    (to exercise the real auto_mode/current_mode chain against chosen fake GPUs) overrides
+    this default, same as patching anything else in setup."""
     from agent import gpumode
 
+    real_detect_gpus = gpumode.detect_gpus
+    monkeypatch.setattr(gpumode, "detect_gpus",
+                         lambda drm_root=None, **kw: real_detect_gpus(drm_root, **kw) if drm_root is not None else [])
     for var in ("AGENT_GPU_MODE", "AGENT_CHAT_CTX", "AGENT_SINGLE_KV", "AGENT_DUAL_KV",
                 "AGENT_VULKAN_MODELS", "AGENT_VULKAN_OLLAMA_URL"):
         monkeypatch.delenv(var, raising=False)
@@ -52,6 +64,19 @@ def _isolated_gpu_choice(monkeypatch, tmp_path):
     gpumode.reset()
     yield
     gpumode.reset()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_sysinfo(monkeypatch):
+    """`agent.sysinfo.current()` caches a real `detect()` for the process - so whichever test
+    runs first (e.g. modelpick recommending a chat model from total VRAM) leaks this machine's
+    real hardware (via the real detect_gpus() call `detect()` makes) into every test after it,
+    unless a test seeds `sysinfo._cached` itself (see test_profiles.py) - which this must not
+    override. Clearing the cache per test is enough: a fresh `detect()` still goes through
+    `gpumode.detect_gpus()`, already neutralised to [] by default in `_isolated_gpu_choice`."""
+    from agent import sysinfo
+
+    monkeypatch.setattr(sysinfo, "_cached", None)
 
 
 @pytest.fixture(autouse=True)
