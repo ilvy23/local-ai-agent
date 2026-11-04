@@ -352,6 +352,34 @@ def set_models(path: Any, values: dict[str, str]) -> str:
     return "dump"
 
 
+def follow_chat(config: dict, old: str, new: str, path: Any | None = None) -> dict[str, str]:
+    """After the chat model was switched from `old` to `new`: let the other chat roles (background, reasoning, ...) follow it.
+
+    Without this `/model` changed ONLY `models.chat`; the background role (memory facts, summaries, plans) kept the previous model, so a
+    second, different model was loaded behind the chosen one - the "it is not the model I picked" effect (and on the dual-GPU server it
+    evicted the chosen model from VRAM). A role follows when it still names the old chat model or the user never chose it in config.yaml;
+    a model the user picked on purpose for that role stays. Changes config IN PLACE and (when `path` is given) config.yaml.
+    Returns {role: new model} for what changed."""
+    from agent import config as cfgmod
+
+    if not new or old == new:
+        return {}
+    models = config.setdefault("models", {})
+    user = set(cfgmod.last_load().get("user_models") or [])
+    changed: dict[str, str] = {}
+    for role in CHAT_ROLES[1:]:
+        cur = str(models.get(role) or "")
+        if cur and cur != new and (cur == old or role not in user):
+            models[role] = new
+            changed[role] = new
+    if changed and path is not None:
+        try:
+            set_models(path, changed)
+        except Exception:  # noqa: BLE001 - persisting is best effort; the running session already follows
+            pass
+    return changed
+
+
 def use_everywhere(path: Any, chat_model: str, embed: str | None = None) -> dict[str, str]:
     """`nightage models use`: one chat model for all chat roles (weekly too), optionally the embedder."""
     vals = {r: chat_model for r in CHAT_ROLES}

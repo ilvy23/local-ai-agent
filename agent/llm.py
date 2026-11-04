@@ -289,8 +289,13 @@ def cap_ctx(model: str | None, num_ctx: int | None, config: dict | None = None,
     caller (chiefly tests) supply fake hardware instead of real detection."""
     if not num_ctx:
         return num_ctx
-    from . import ctxbudget
+    from . import ctxbudget, gpumode
 
+    # The context the user picked in the start-up question (already estimated against the free VRAM and the model's own maximum
+    # there) is honoured: the generic ceiling (default 95000) must not silently cut "131072" back to 95000.
+    chosen = gpumode.chat_ctx_override()
+    if chosen and int(num_ctx) <= chosen and not ctxbudget._override(model, config):
+        return int(num_ctx)
     return ctxbudget.budget_for(model, None, hw_summary=hw_summary, requested=int(num_ctx), config=config)
 
 
@@ -302,6 +307,12 @@ _last_num_ctx: dict[str, int] = {}
 def _remember_ctx(model: str, num_ctx: int | None) -> None:
     if num_ctx:
         _last_num_ctx[model] = int(num_ctx)
+
+
+# Models this process has used for real (foreground) chat turns. A background call on the SAME model must not ask for
+# `num_gpu: 0`: Ollama treats different options as a different runner, reloads the model with zero GPU layers and the chat
+# model then sits 100 % on the CPU (seen with gpt-oss:20b on the dual-GPU server, where every role follows the chat model).
+_foreground_models: set[str] = set()
 
 
 _CLEAN_THINK_OFF = re.compile(r"qwen3\.[5-9]", re.IGNORECASE)
@@ -875,8 +886,11 @@ class OllamaClient:
             options["num_predict"] = BACKGROUND_NUM_PREDICT
             if supports_think_off(model):
                 payload["think"] = False
-            elif num_gpu is None and wants_vulkan(model) and os.environ.get("AGENT_BG_CPU", "1") != "0":
+            elif (num_gpu is None and wants_vulkan(model) and model not in _foreground_models
+                  and os.environ.get("AGENT_BG_CPU", "1") != "0"):
                 num_gpu = 0
+        else:
+            _foreground_models.add(model)
         num_ctx = cap_ctx(model, num_ctx)
         _remember_ctx(model, num_ctx)
         if num_ctx:
@@ -1026,6 +1040,7 @@ class OllamaClient:
         if cap:
             options["num_predict"] = cap
         _remember_ctx(model, num_ctx)
+        _foreground_models.add(model)
         if num_ctx:
             options["num_ctx"] = num_ctx
         if extra_options:
@@ -1123,6 +1138,7 @@ class OllamaClient:
         if cap:
             options["num_predict"] = cap
         _remember_ctx(model, num_ctx)
+        _foreground_models.add(model)
         if num_ctx:
             options["num_ctx"] = num_ctx
         if extra_options:

@@ -146,6 +146,19 @@ def fit_footer(s: FooterState, width: int, plain: bool = False) -> str:
 SLOW_HINT_S = 10.0     # after this long without a first token the row explains the wait
 
 
+def _slow_note() -> str:
+    """Why the wait is long. Only says 'CPU' on a machine that has no usable GPU: on a GPU box the wait is the model loading
+    or a long prompt, and claiming 'CPU' there is wrong and alarming."""
+    try:
+        from agent import gpumode
+
+        if gpumode.current_mode():
+            return " (the model may still be loading; a long prompt takes a moment)"
+    except Exception:  # noqa: BLE001 - a hint must never break the screen
+        pass
+    return " (no GPU found: this can take a few minutes)"
+
+
 def activity_row(snap: dict[str, Any], width: int, plain: bool = False, tick: float | None = None,
                  verbose: bool = False) -> str:
     """The one-line 'what is happening now' row. `snap` is TurnWorker.snapshot()."""
@@ -164,8 +177,7 @@ def activity_row(snap: dict[str, Any], width: int, plain: bool = False, tick: fl
             lead, now = frame, snap.get("now") or "working"
         if snap.get("waiting_s", 0) >= SLOW_HINT_S and state not in ("paused", "waiting_approval"):
             est = int(snap.get("prompt_tokens") or 0)
-            now = (f"reading the prompt (~{style.fmt_tokens(est)} tokens)" if est else "reading the prompt") \
-                + "... on CPU this can take a few minutes"
+            now = (f"reading the prompt (~{style.fmt_tokens(est)} tokens)" if est else "reading the prompt") + _slow_note()
         bits = [now, style.fmt_duration(snap.get("elapsed", 0))]
         if snap.get("waiting_s", 0) >= SLOW_HINT_S and state not in ("paused", "waiting_approval"):
             bits.reverse()               # the clock first: a long hint may be cut at narrow widths, the time must not be

@@ -41,6 +41,10 @@ def select_model(
         set_value("chat_model", body.model)
     except ValueError:
         pass  # switched for this process even if persisting the default failed
+    from agent import modelpick
+    from agent.config import DEFAULT_CONFIG_PATH
+
+    modelpick.follow_chat(config, previous_model, body.model, DEFAULT_CONFIG_PATH)
     config["models"]["chat"] = body.model
 
     # Switch the actual VRAM occupant right now, not lazily on the next

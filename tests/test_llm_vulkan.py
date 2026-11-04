@@ -256,6 +256,7 @@ def test_background_chat_is_capped_and_cpu_only_on_vulkan(monkeypatch):
     monkeypatch.setattr(llm.OllamaClient, "_client_for", lambda self, model: FakeClient())
     monkeypatch.setenv("AGENT_VULKAN_MODELS", ".*")
     monkeypatch.delenv("AGENT_BG_CPU", raising=False)
+    llm._foreground_models.discard("qwen3:4b")
     try:
         "".join(client.chat([{"role": "user", "content": "x"}], "qwen3:4b", stream=False, background=True))
     except Exception:
@@ -408,3 +409,48 @@ def test_env_url_counts_as_configured_without_any_probe(monkeypatch):
     _no_vulkan_env(monkeypatch)
     monkeypatch.setenv("AGENT_VULKAN_OLLAMA_URL", "10.0.0.5:11436")
     assert llm.vulkan_available() and llm.uses_vulkan("qwen3.5:9b")
+
+
+def test_background_call_on_the_chat_model_never_forces_cpu(monkeypatch):
+    """gpt-oss:20b bug: a background call on the model that is also the chat model must not send num_gpu 0 (reloads it 100% on CPU)."""
+    from agent import llm
+
+    seen = {}
+
+    class Resp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def raise_for_status(self): pass
+        def iter_lines(self): return iter(['{"message": {"content": "ok"}, "done": true}'])
+
+    class FakeClient:
+        def stream(self, method, path, json=None, **kw):
+            seen["payload"] = json
+            return Resp()
+
+    client = llm.OllamaClient.__new__(llm.OllamaClient)
+    monkeypatch.setattr(llm.OllamaClient, "_client_for", lambda self, model: FakeClient())
+    monkeypatch.setenv("AGENT_VULKAN_MODELS", ".*")
+    monkeypatch.delenv("AGENT_BG_CPU", raising=False)
+    llm._foreground_models.add("gpt-oss:20b")
+    try:
+        "".join(client.chat([{"role": "user", "content": "x"}], "gpt-oss:20b", stream=False, background=True))
+    finally:
+        llm._foreground_models.discard("gpt-oss:20b")
+    assert "num_gpu" not in seen["payload"]["options"]
+
+
+def test_follow_chat_moves_the_other_roles_and_keeps_deliberate_ones(tmp_path, monkeypatch):
+    from agent import config as cfgmod, modelpick
+
+    monkeypatch.setitem(cfgmod.LAST_LOAD, "user_models", ["coding"])
+    cfg = {"models": {"chat": "a", "background": "a", "reasoning": "x", "coding": "coder", "unrestricted": ""}}
+    changed = modelpick.follow_chat(cfg, "a", "b", tmp_path / "c.yaml")
+    assert changed == {"background": "b", "reasoning": "b"} and cfg["models"]["coding"] == "coder"
+
+
+def test_cap_ctx_honours_the_users_context_choice(monkeypatch):
+    from agent import gpumode, llm
+
+    monkeypatch.setitem(gpumode._state, "ctx", 131072)
+    assert llm.cap_ctx("gpt-oss:20b", 131072) == 131072

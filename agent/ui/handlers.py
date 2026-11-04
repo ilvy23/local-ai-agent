@@ -164,6 +164,10 @@ class ChatController:
             set_value("chat_model", selected)
         except Exception as exc:  # noqa: BLE001
             out.append(f"Switched for now, but couldn't save it as the default: {exc}")
+        from agent import modelpick
+        from agent.config import DEFAULT_CONFIG_PATH
+
+        modelpick.follow_chat(s.config, current, selected, DEFAULT_CONFIG_PATH)
         s.config["models"]["chat"] = selected
         s.model = selected
         out.append(f"Switched to {selected}. It is used from the next turn on, including in new chats.")

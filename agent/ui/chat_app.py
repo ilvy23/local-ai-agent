@@ -195,6 +195,27 @@ def _print_start(app: Any, state: ChatState, quiet: Console, resumed_id: int | N
     tui._warn_if_model_cannot_use_tools(Console(file=buf, force_terminal=False, width=100), client, state.model)
     if buf.getvalue().strip():
         r.notice(" ".join(buf.getvalue().split()))
+    _warm_up_model(client, config, state.model)
+
+
+def _warm_up_model(client: Any, config: dict[str, Any], model: str) -> None:
+    """Load the chat model in the background while the user is still typing, with the SAME context the first turn will use (a different
+    num_ctx would make Ollama reload it), so the first answer does not wait ~10 s for the load."""
+    import threading
+
+    from agent import llm, tui
+
+    if not model or not hasattr(client, "preload"):
+        return
+
+    def run() -> None:
+        try:
+            llm._remember_ctx(model, tui._num_ctx(config, model))
+            client.preload(model)
+        except Exception:  # noqa: BLE001 - warming up is an optimisation, never an error
+            pass
+
+    threading.Thread(target=run, name="model-warmup", daemon=True).start()
 
 
 def _shutdown(app: Any, state: ChatState, client: Any, config: dict[str, Any], unload: bool) -> None:

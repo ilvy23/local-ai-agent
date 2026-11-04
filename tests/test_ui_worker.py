@@ -304,7 +304,7 @@ def test_slow_model_hint_after_ten_seconds_and_live_rate(monkeypatch):
     clock["t"] += 96                                              # 1m 40s without a token
     snap = w.snapshot()
     row = activity_row(snap, 120, plain=True)
-    assert "reading the prompt (~2.1k tokens)... on CPU this can take a few minutes" in row and "\n" not in row
+    assert "reading the prompt (~2.1k tokens)" in row and "\n" not in row
     assert "1m 40s" in activity_row(snap, 60, plain=True)         # the clock survives narrow widths
     for _ in range(10):                                           # streaming starts: hint gone, rate shown
         w.emit({"type": "token", "text": "word " * 4})
