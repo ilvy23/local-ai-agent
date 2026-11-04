@@ -433,8 +433,20 @@ class CodeTools:
         if isinstance(paths, str):
             paths = [x for x in re.split(r"[,\n]", paths) if x.strip()]
         out = []
+        budget, used = 2 * self.read_max_chars, 0          # one answer of six full files was ~17k tokens in a single tool result
         for p in (paths or [])[:6]:
-            out.append(self.read_file(str(p).strip()))
+            name = str(p).strip()
+            try:
+                size = self.resolve(name).stat().st_size
+            except (OSError, ValueError):
+                size = 0
+            if out and used + min(size, self.read_max_chars) > budget:
+                # decided BEFORE reading: a read marks the file as seen, and the model must never be told it saw text it did not get
+                out.append(f"{name}: not read here - this answer is already long; read it with read_file")
+                continue
+            text = self.read_file(name)
+            used += len(text)
+            out.append(text)
         return "\n\n=====\n\n".join(out) or "error: give paths=[...]"
 
     def outline(self, path: str, **_: Any) -> str:

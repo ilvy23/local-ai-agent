@@ -418,6 +418,8 @@ class ContextManager:
         return self.last_prompt + self.last_eval + int(self._since / CHARS_PER_TOKEN)
 
     def note_usage(self, message: dict[str, Any], think: bool = False) -> None:
+        if message.get("_aborted") and not message.get("_prompt_eval_count"):
+            return          # a stopped stream reports no counts: keep the estimate (a reset to 0 skipped a needed history fold)
         self.last_prompt = int(message.get("_prompt_eval_count", 0) or 0)
         self.last_eval = int(message.get("_eval_count", 0) or 0)
         self._since = 0

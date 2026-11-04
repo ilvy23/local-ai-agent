@@ -703,6 +703,7 @@ class CodeEngine:
         if goal != self._ask_goal:
             self.asks, self._ask_goal = 0, goal
         self.stage_goal, self.resume_note, self.think_steps = goal, None, 0
+        self._seen_states = set()                    # project-file states of this prompt (see _advanced)
         self.lookact.begin_stage()
         self._outside_noted = False
         self._stray_looks = 0
@@ -1158,9 +1159,21 @@ class CodeEngine:
         except Exception:  # noqa: BLE001 - a measuring problem is no progress, not a crash
             return None
 
-    @staticmethod
-    def _advanced(before: tuple[str, int] | None, now: tuple[str, int] | None) -> bool:
-        return before is not None and now is not None and (now[0] != before[0] or now[1] > before[1])
+    def _advanced(self, before: tuple[str, int] | None, now: tuple[str, int] | None) -> bool:
+        """Real progress: more green checks / confirmed items / passing test runs, or a state of the project files NOT SEEN before
+        in this prompt. Any changed byte used to count, so edits that flip a file back and forth (A -> B -> A) extended the step
+        budget without end."""
+        if before is None or now is None:
+            return False
+        seen = self.__dict__.setdefault("_seen_states", set())
+        seen.add(before[0])
+        if now[1] > before[1]:
+            seen.add(now[0])
+            return True
+        if now[0] != before[0] and now[0] not in seen:
+            seen.add(now[0])
+            return True
+        return False
 
     def _renew(self, mark: tuple[str, int] | None, nudges: dict[str, int]) -> tuple[str, int] | None:
         """A new finish attempt: when real progress happened since `mark`, the gate nudges, the check returns and the announce
