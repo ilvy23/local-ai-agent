@@ -195,7 +195,7 @@ def _print_start(app: Any, state: ChatState, quiet: Console, resumed_id: int | N
     tui._warn_if_model_cannot_use_tools(Console(file=buf, force_terminal=False, width=100), client, state.model)
     if buf.getvalue().strip():
         r.notice(" ".join(buf.getvalue().split()))
-    _warm_up_model(client, config, state.model)
+    _warm_up_model(client, state.config, state.model)
 
 
 def _warm_up_model(client: Any, config: dict[str, Any], model: str) -> None:
