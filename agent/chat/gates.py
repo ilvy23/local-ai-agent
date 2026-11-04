@@ -50,8 +50,8 @@ def begin_turn() -> None:
     resume after an approval."""
     from agent.research import evidence as turn_evidence
 
-    taint.clear()
-    turn_evidence.clear()
+    taint.begin()                 # a fresh, per-turn record (per web request): sessions no longer reset each other's
+    turn_evidence.begin()
 
 
 # --------------------------------------------------------------------------------------------- verify gate

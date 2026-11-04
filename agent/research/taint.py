@@ -10,12 +10,37 @@ slips past it, but the approval gate for risky tools stays on regardless.
 
 from __future__ import annotations
 
+import contextvars
 import threading
 from typing import Any
 
 _lock = threading.Lock()
-_texts: list[str] = []
-_computed: list[str] = []            # results of the calc tool this turn
+
+
+class _State:
+    """What ONE turn read from the web (and what its calc tool computed)."""
+
+    def __init__(self) -> None:
+        self.texts: list[str] = []
+        self.computed: list[str] = []          # results of the calc tool this turn
+
+
+# Per turn, not per process: each web request (an asyncio task, whose to_thread workers inherit its context) and the chat's turn
+# get their own record, so one session starting a turn no longer wipes the record another session's approval check relies on.
+# A plain thread that inherits no context uses the record of the turn begun last - exactly what the single shared record did.
+_CURRENT: contextvars.ContextVar[_State | None] = contextvars.ContextVar("web_taint", default=None)
+_LAST = [_State()]
+
+
+def _st() -> _State:
+    return _CURRENT.get() or _LAST[0]
+
+
+def begin() -> None:
+    """A fresh record for the turn that starts in this context (call once per NEW turn, never on a resume)."""
+    st = _State()
+    _CURRENT.set(st)
+    _LAST[0] = st
 _MAX_TEXTS = 40
 _WINDOW = 24         # characters of an argument that must reappear verbatim in a page to count as copied
 
@@ -23,22 +48,22 @@ _WINDOW = 24         # characters of an argument that must reappear verbatim in 
 def add(text: str) -> None:
     if text and text.strip():
         with _lock:
-            _texts.append(text)
-            del _texts[:-_MAX_TEXTS]
+            _st().texts.append(text)
+            del _st().texts[:-_MAX_TEXTS]
 
 
 def clear() -> None:
     with _lock:
-        _texts.clear()
-        _computed.clear()
+        _st().texts.clear()
+        _st().computed.clear()
 
 
 def add_computed(text: str) -> None:
     """Record what the calc tool returned, so a block claiming "computed" can be checked against it."""
     if text and text.strip():
         with _lock:
-            _computed.append(text)
-            del _computed[:-_MAX_TEXTS]
+            _st().computed.append(text)
+            del _st().computed[:-_MAX_TEXTS]
 
 
 def _strings(value: Any) -> list[str]:
@@ -54,7 +79,7 @@ def _strings(value: Any) -> list[str]:
 def copied(arguments: dict[str, Any]) -> bool:
     """True if a stretch of any string argument appears verbatim in text read from the web this turn."""
     with _lock:
-        pages = list(_texts)
+        pages = list(_st().texts)
     if not pages:
         return False
     blob = "\n".join(pages)
@@ -74,7 +99,7 @@ def has_number(value: float) -> bool:
     from agent.research.verdict import _has_number
 
     with _lock:
-        blob = "\n".join(_texts)
+        blob = "\n".join(_st().texts)
     return _has_number(value, blob)
 
 
@@ -83,5 +108,5 @@ def has_computed_number(value: float) -> bool:
     from agent.research.verdict import _has_number
 
     with _lock:
-        blob = "\n".join(_computed)
+        blob = "\n".join(_st().computed)
     return _has_number(value, blob)
