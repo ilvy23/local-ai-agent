@@ -68,9 +68,11 @@ def _fresh_model_protection():
     from agent.memory import recall
 
     llm.reset_protection()
+    llm._EMBED_CACHE.clear()
     recall.reset_heads()
     yield
     llm.reset_protection()
+    llm._EMBED_CACHE.clear()
     recall.reset_heads()
 
 

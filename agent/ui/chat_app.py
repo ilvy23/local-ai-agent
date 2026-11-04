@@ -191,10 +191,8 @@ def _print_start(app: Any, state: ChatState, quiet: Console, resumed_id: int | N
     vectors = getattr(state, "vectors", None)
     if vectors is not None and getattr(vectors, "available", True) is False and friendly.once("vector-extension"):
         r.info("Memory searches by keywords only (the vector add-on is missing). Details: nightage doctor")
-    buf = io.StringIO()
-    tui._warn_if_model_cannot_use_tools(Console(file=buf, force_terminal=False, width=100), client, state.model)
-    if buf.getvalue().strip():
-        r.notice(" ".join(buf.getvalue().split()))
+    # the tools check asks the server about the model - in dual mode that can mean starting the Vulkan server first: it runs in the
+    # warm-up thread, so the UI is there at once
     _warm_up_model(client, state.config, state.model, notify=r.notice)
 
 
@@ -222,6 +220,10 @@ def _warm_up_model(client: Any, config: dict[str, Any], model: str, notify: Any 
             message = repair_cpu_placement(client, model)
             if message and notify is not None:
                 notify(message)
+            buf = io.StringIO()
+            tui._warn_if_model_cannot_use_tools(Console(file=buf, force_terminal=False, width=100), client, model)
+            if buf.getvalue().strip() and notify is not None:
+                notify(" ".join(buf.getvalue().split()))
         except Exception:  # noqa: BLE001 - warming up is an optimisation, never an error
             pass
 

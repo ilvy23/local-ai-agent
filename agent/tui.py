@@ -1275,7 +1275,7 @@ def _ask_more_steps(console: Console, done: int) -> bool:
     if not console.is_terminal or os.environ.get("AGENT_NO_CONTINUE_PROMPT"):
         return False
     try:
-        answer = console.input(f"[yellow]{done} Schritte gemacht, Aufgabe noch offen.[/yellow] Weiter? [y/N] ")
+        answer = console.input(f"[yellow]{done} steps done, the task is not finished yet.[/yellow] Continue? [y/N] ")
     except (EOFError, KeyboardInterrupt):
         return False
     return answer.strip().lower() in ("y", "yes", "j", "ja")

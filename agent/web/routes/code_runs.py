@@ -397,7 +397,9 @@ def _build_engine(run: Run, root: Path, config: dict[str, Any], client: Any, con
     from agent.memory.store import Store
     from agent.tools.web import make_web_tools
 
-    store = Store(config["data"]["db_path"])
+    from agent.config import db_path
+
+    store = Store(db_path(config))
     web: list = []
     with contextlib.suppress(Exception):
         web = make_web_tools(console)

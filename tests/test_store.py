@@ -335,7 +335,7 @@ def test_schema_version_is_current(tmp_path: Path) -> None:
     from agent.memory.store import SCHEMA_VERSION
 
     store = Store(tmp_path / "agent.db")
-    assert store.schema_version() == SCHEMA_VERSION == 16
+    assert store.schema_version() == SCHEMA_VERSION == 17
     store.close()
 
 

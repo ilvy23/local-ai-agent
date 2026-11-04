@@ -165,24 +165,33 @@ class VectorIndex:
                 f"`{brand.CMD} reembed <model>` to rebuild it at the new size."
             )
 
-        # Over-fetch when filtering by kind so the post-filter can still return
-        # k results (KNN can't be combined with a WHERE on the joined table).
-        fetch_k = k * 4 if kinds else k
-        rows = self._conn.execute(
-            """
-            SELECT i.text, i.kind, i.ref_id, v.distance
-            FROM memory_vectors v
-            JOIN memory_items i ON i.id = v.rowid
-            WHERE v.embedding MATCH ? AND k = ?
-            ORDER BY v.distance
-            """,
-            (_pack(embedding), fetch_k),
-        ).fetchall()
-
-        results = [(r["text"], r["kind"], r["ref_id"], r["distance"]) for r in rows]
-        if kinds is not None:
-            allowed = set(kinds)
-            results = [r for r in results if r[1] in allowed]
+        # KNN can't be combined with a WHERE on the joined table, so a kind filter over-fetches and filters afterwards. A fixed x4
+        # was not enough once many vectors of OTHER kinds (thousands of chat lines) are closer: the facts never made it into the
+        # candidates. So the candidate set widens (x4, x16, x64) until it holds k items of the wanted kinds.
+        allowed = set(kinds) if kinds is not None else None
+        total = None
+        packed = _pack(embedding)
+        for factor in ((4, 16, 64) if allowed else (1,)):
+            fetch_k = k * factor
+            rows = self._conn.execute(
+                """
+                SELECT i.text, i.kind, i.ref_id, v.distance
+                FROM memory_vectors v
+                JOIN memory_items i ON i.id = v.rowid
+                WHERE v.embedding MATCH ? AND k = ?
+                ORDER BY v.distance
+                """,
+                (packed, fetch_k),
+            ).fetchall()
+            results = [(r["text"], r["kind"], r["ref_id"], r["distance"]) for r in rows]
+            if allowed is not None:
+                results = [r for r in results if r[1] in allowed]
+            if allowed is None or len(results) >= k or len(rows) < fetch_k:
+                break                                   # enough, or the index holds no more candidates
+            if total is None:
+                total = self._conn.execute("SELECT COUNT(*) FROM memory_items").fetchone()[0]
+            if fetch_k >= total:
+                break
         return results[:k]
 
     def similar(

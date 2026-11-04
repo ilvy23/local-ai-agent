@@ -39,7 +39,9 @@ def learn_after_turn(client: Any, config: dict[str, Any], user_input: str, reply
         from agent.memory.vectors import VectorIndex
         from agent.tui import _save_learned_facts
 
-        with Store(config["data"]["db_path"]) as store:
+        from agent.config import db_path
+
+        with Store(db_path(config)) as store:
             _save_learned_facts(client, config, store, VectorIndex(store), [(user_input, reply, evidence)])
 
     return submit(work)

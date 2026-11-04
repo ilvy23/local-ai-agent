@@ -271,6 +271,11 @@ def _vulkan_start_command() -> list[str] | None:
 # batch. ~4000 chars stays comfortably under nomic-embed-text's ~2048 tokens.
 EMBED_MAX_CHARS = 4000
 
+from collections import OrderedDict as _OrderedDict
+
+_EMBED_CACHE: "_OrderedDict[tuple[str, str], list[float]]" = _OrderedDict()     # (model, text) -> vector, the last few single texts
+_EMBED_CACHE_MAX = 32
+
 # Keep the model resident in VRAM this long after each call so back-to-back CLI
 # commands (chat, then a summary, then a profile) don't each pay a cold
 # reload — the single biggest speedup on repeated use. It frees after 30 min
@@ -1596,6 +1601,10 @@ class OllamaClient:
         if embedding_unavailable(model):
             raise EmbeddingUnavailable(model)
         capped = [t[:EMBED_MAX_CHARS] for t in texts]
+        key = (model, capped[0]) if len(capped) == 1 else None
+        if key is not None and key in _EMBED_CACHE:
+            _EMBED_CACHE.move_to_end(key)
+            return [list(_EMBED_CACHE[key])]          # the same text again this turn (recall, then saving the message): no second call
         payload: dict[str, Any] = {"model": model, "input": capped}
         if num_gpu is not None:
             payload["options"] = {"num_gpu": num_gpu}
@@ -1617,7 +1626,12 @@ class OllamaClient:
                 raise EmbeddingUnavailable(model) from exc
             raise
         _embed_down.pop(model, None)
-        return response.json()["embeddings"]
+        vectors = response.json()["embeddings"]
+        if key is not None and vectors:
+            _EMBED_CACHE[key] = list(vectors[0])
+            while len(_EMBED_CACHE) > _EMBED_CACHE_MAX:
+                _EMBED_CACHE.popitem(last=False)
+        return vectors
 
 
 # ── engine seam helpers: optional client methods with neutral defaults ─────────────────────────────────

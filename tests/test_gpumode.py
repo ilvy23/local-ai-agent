@@ -178,7 +178,7 @@ def test_question_shows_both_options_and_estimates_for_chat_and_biggest_model():
     mode, seen, out = _choose("2")
     assert mode == DUAL and seen["choices"] == ["1", "2"]
     assert "small:9b" in out and "big:27b" in out and "bge-m3" not in out
-    assert "Tokens" in out
+    assert "tokens" in out
 
 
 def test_default_is_dual_when_the_biggest_model_needs_both_cards():
@@ -335,4 +335,4 @@ def test_hybrid_model_with_hidden_kv_heads_still_gets_a_conservative_estimate():
     assert facts["kv_elems_per_token"] == 8 * 16 * 512          # 32/4 = 8 attention layers, MHA assumed
     est = gpumode.estimate_context(facts, 6 * 1024 + 6000, "q8_0")
     assert est.fits and est.approx and 40000 < est.ctx <= 262144
-    assert "vorsichtig" in gpumode._fmt_ctx(est)
+    assert "cautious" in gpumode._fmt_ctx(est)

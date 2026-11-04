@@ -235,6 +235,13 @@ def load_config(
     return _finish(copy.deepcopy(DEFAULT_CONFIG), loaded)
 
 
+def db_path(config: dict[str, Any]) -> Path:
+    """The memory database of `config`: a relative `data.db_path` counts from the project folder, NOT from wherever the process was
+    started (the web server opened `$CWD/data/agent.db` - an empty, second memory - when started outside the checkout)."""
+    raw = Path(str(((config or {}).get("data") or {}).get("db_path") or "data/agent.db")).expanduser()
+    return raw if raw.is_absolute() else PROJECT_ROOT / raw
+
+
 def resolved(config: dict[str, Any]) -> dict[str, Any]:
     """`config` with its "auto" model roles resolved against what is installed (agent.modelpick), IN PLACE, for code paths that do
     not go through the normal start (ollama_local.begin): the web server, `memory search/add/process/repair`, the prompt tools.

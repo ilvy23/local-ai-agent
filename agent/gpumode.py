@@ -52,6 +52,7 @@ def reset() -> None:
     _state["mode"] = None
     _state["ctx"] = None
     _facts_cache.clear()
+    _DETECT_CACHE["gpus"] = None
     _auto_mode_cache["done"] = False
     _auto_mode_cache["value"] = None
 
@@ -150,7 +151,26 @@ def _sysfs_vram_mb(dev: Path) -> tuple[int, int] | None:
         return None
 
 
+_DETECT_CACHE: dict[str, Any] = {"at": 0.0, "gpus": None}
+DETECT_CACHE_S = 10.0             # nvidia-smi ran 4-5 times before the first prompt; the answer does not change in seconds
+
+
 def detect_gpus(drm_root: Path | str = "/sys/class/drm") -> list[Gpu]:
+    """Discrete GPUs with their VRAM (see _detect_gpus). The answer for the real sysfs is cached for DETECT_CACHE_S seconds; a test
+    pointing `drm_root` at a fake tree always gets a fresh one."""
+    import time as _time
+
+    if str(drm_root) != "/sys/class/drm":
+        return _detect_gpus(drm_root)
+    now = _time.monotonic()
+    if _DETECT_CACHE["gpus"] is not None and now - _DETECT_CACHE["at"] < DETECT_CACHE_S:
+        return list(_DETECT_CACHE["gpus"])
+    gpus = _detect_gpus(drm_root)
+    _DETECT_CACHE["gpus"], _DETECT_CACHE["at"] = list(gpus), now
+    return gpus
+
+
+def _detect_gpus(drm_root: Path | str = "/sys/class/drm") -> list[Gpu]:
     """Discrete GPUs with their VRAM: AMD/Intel via sysfs, NVIDIA via nvidia-smi.
 
     Resilient by design: any single detection step that errors, times out, or reports a
@@ -298,13 +318,13 @@ def _remember(mode: str) -> None:
 
 def _fmt_ctx(est: Estimate) -> str:
     if not est.fits:
-        return f"passt nicht ganz rein (~{est.over_mb / 1024:.1f} GB zu viel -> teils CPU, langsam)"
+        return f"does not quite fit (~{est.over_mb / 1024:.1f} GB too much -> partly on the CPU, slow)"
     if est.ctx < 2048:
-        return "kaum Platz für Kontext"
-    suffix = " (Maximum des Modells)" if est.limited_by_model else ""
+        return "hardly any room for context"
+    suffix = " (the model's maximum)" if est.limited_by_model else ""
     if est.approx:
-        suffix += " (vorsichtig geschätzt)"
-    return f"~{est.ctx:,} Tokens{suffix}".replace(",", ".")
+        suffix += " (cautious estimate)"
+    return f"~{est.ctx:,} tokens{suffix}"
 
 
 def models_to_show(client: Any, config: dict[str, Any]) -> list[str]:
@@ -387,16 +407,16 @@ def ensure_choice(
         console = Console()
     from rich.table import Table
 
-    table = Table(title="Wie sollen die Modelle laufen?", title_justify="left", show_lines=False)
+    table = Table(title="How should the models run?", title_justify="left", show_lines=False)
     table.add_column("")
     for i, o in enumerate(options, 1):
-        table.add_column(f"[{i}] {'nur ' if o.mode == SINGLE else 'beide: '}{o.label}")
-    table.add_row("Frei (geschätzt)", *[f"{o.usable_mb / 1024:.1f} GB" for o in options])
+        table.add_column(f"[{i}] {'only ' if o.mode == SINGLE else 'both: '}{o.label}")
+    table.add_row("Free (estimated)", *[f"{o.usable_mb / 1024:.1f} GB" for o in options])
     for model, ests in rows:
-        table.add_row(model, *[_fmt_ctx(e) if e else "unbekannt" for e in ests])
+        table.add_row(model, *[_fmt_ctx(e) if e else "unknown" for e in ests])
     console.print(table)
-    console.print("[dim]Schätzung aus Modellgröße, freiem VRAM und KV-Cache-Typ (Single: "
-                  f"{options[0].kv_type}" + (f", beide: {options[1].kv_type}" if len(options) > 1 else "") + ").[/dim]")
+    console.print("[dim]Estimated from the model size, the free VRAM and the KV-cache type (one GPU: "
+                  f"{options[0].kv_type}" + (f", both: {options[1].kv_type}" if len(options) > 1 else "") + ").[/dim]")
 
     previous = last_mode()
     biggest_fits_single = True
@@ -414,7 +434,8 @@ def ensure_choice(
     picked = options[int(answer) - 1]
 
     ctx = None
-    chat_model = rows[0] if rows else None
+    chat_name = str((config.get("models") or {}).get("chat") or "")
+    chat_model = next((r for r in rows if r[0] == chat_name), rows[0] if rows else None)      # the chat's row, wherever it is
     if chat_model and chat_model[1][int(answer) - 1] and chat_model[1][int(answer) - 1].fits:
         est = chat_model[1][int(answer) - 1]
         recommended = max(est.ctx, 4096)
@@ -424,18 +445,16 @@ def ensure_choice(
 
             def ask_int(q: str, dflt: int) -> int:  # type: ignore[misc]
                 return IntPrompt.ask(q, default=dflt, console=console)
-        ctx = ask_int(f"Kontext für den Chat in Tokens (Empfehlung {recommended:,}, bisher {current:,})".replace(",", "."),
-                      recommended)
+        ctx = ask_int(f"Context for the chat in tokens (recommended {recommended:,}, current {current:,})", recommended)
         ctx = max(2048, min(int(ctx), _CTX_CAP))
         if ctx > recommended * 1.1:
             # Past what fits, layers spill onto the CPU and decode speed is bound by RAM
             # bandwidth. Measured on a 27B model split across two consumer GPUs (q8_0 KV): decode speed
             # falls noticeably once the context no longer fits in VRAM.
-            console.print(f"[yellow]Achtung:[/yellow] {ctx:,} liegt über der Schätzung ({recommended:,}) - "
-                          "die Schätzung ist vorsichtig; wenn das Modell nicht mehr komplett in den VRAM passt, "
-                          "wandern Layer auf die CPU und es wird deutlich langsamer.".replace(",", "."))
+            console.print(f"[yellow]Note:[/yellow] {ctx:,} is above the estimate ({recommended:,}). The estimate is cautious, but "
+                          "once the model no longer fits the graphics memory completely, layers move to the CPU and it gets much slower.")
     _apply(picked.mode, ctx)
     _remember(picked.mode)
-    console.print(f"[green]{'Beide GPUs' if picked.mode == DUAL else 'Eine GPU'}[/green]"
-                  + (f", Kontext {ctx:,}".replace(",", ".") if ctx else "") + ".")
+    console.print(f"[green]{'Both GPUs' if picked.mode == DUAL else 'One GPU'}[/green]"
+                  + (f", context {ctx:,} tokens" if ctx else "") + ".")
     return picked.mode

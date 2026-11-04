@@ -338,6 +338,14 @@ def _create_v16_schema(conn: sqlite3.Connection) -> None:
     )
 
 
+def _create_v17_schema(conn: sqlite3.Connection) -> None:
+    """v17: the indexes every turn needs. Loading a session's messages, the memory index's kind look-ups and the active-facts query
+    all scanned whole tables; with a long history that is work done before EVERY reply."""
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_items_kind_ref ON memory_items(kind, ref_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_active_kind ON facts(active, kind)")
+
+
 # Ordered list of (target_version, migration) steps. Each step runs only when
 # the database's current `user_version` is below its target version. Append
 # new (version, callable) entries here for future schema changes; never
@@ -359,6 +367,7 @@ _MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [
     (14, _create_v14_schema),
     (15, _create_v15_schema),
     (16, _create_v16_schema),
+    (17, _create_v17_schema),
 ]
 
 # Guard against an out-of-order or duplicated append, which would make _migrate
@@ -392,6 +401,7 @@ class Store:
         self._conn = sqlite3.connect(self.db_path, timeout=5.0, check_same_thread=False)
         self._conn.execute("PRAGMA busy_timeout = 5000")
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")        # safe with WAL (a power cut can lose the last commit, never corrupt)
         self._conn.row_factory = sqlite3.Row
 
         if is_new:

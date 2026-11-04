@@ -49,7 +49,9 @@ def get_store() -> Store:
     request anyway, so this matches that lifecycle rather than fighting it.
     """
     config = get_config()
-    return Store(config["data"]["db_path"])
+    from agent.config import db_path
+
+    return Store(db_path(config))
 
 
 def build_registry(
