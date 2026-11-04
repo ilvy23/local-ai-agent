@@ -9,6 +9,8 @@ no wasted step.
 
 from __future__ import annotations
 
+import re
+
 import ast
 import inspect
 import json
@@ -127,6 +129,35 @@ def accepts_any_keyword(handler: Any) -> bool:
         return True
 
 
+_DURATION = re.compile(r"^(?:last|past)?[\s_-]*(\d+)\s*(h|hrs?|hours?|d|days?|w|wks?|weeks?|m|mo|mos|months?|y|yrs?|years?)$")
+_SPAN_DAYS = {"day": 1, "week": 7, "month": 31, "year": 366}
+
+
+def _enum_alias(value: Any, enum: list[Any]) -> Any:
+    """An enum value a local model wrote another way, mapped onto the allowed one when that is unambiguous: case and blanks
+    ("Month"), a word inside a phrase ("past_month"), a duration ("30d" -> month, "24h" -> day, "1y" -> year). Anything
+    else comes back unchanged (and is refused with the list of allowed values)."""
+    if not isinstance(value, str):
+        return value
+    v = value.strip().lower()
+    names = [e for e in enum if isinstance(e, str)]
+    for e in names:
+        if v == e.lower():
+            return e
+    inside = [e for e in names if e.lower() in v]
+    if len(inside) == 1:
+        return inside[0]
+    m = _DURATION.match(v)
+    spans = [e for e in names if e in _SPAN_DAYS]
+    if m and spans:
+        n, unit = int(m.group(1)), m.group(2)
+        days = n / 24 if unit.startswith("h") else n * (7 if unit.startswith("w") else 31 if unit.startswith("m") else 366 if unit.startswith("y") else 1)
+        fitting = sorted((s for s in spans if _SPAN_DAYS[s] >= days), key=lambda s: _SPAN_DAYS[s])
+        if fitting:
+            return fitting[0]
+    return value
+
+
 def validate(tool: Any, arguments: Any) -> tuple[dict[str, Any], str | None]:
     """(arguments to use, error message or None). Never raises."""
     if not isinstance(arguments, dict):
@@ -154,6 +185,8 @@ def validate(tool: Any, arguments: Any) -> tuple[dict[str, Any], str | None]:
                 problems.append(f"argument '{key}' must be {wanted}, got {_type_name(value)}")
                 continue
         enum = spec.get("enum") if isinstance(spec, dict) else None
+        if enum and value not in enum:
+            value = _enum_alias(value, enum)
         if enum and value not in enum:
             problems.append(f"argument '{key}' must be one of {enum}, got {value!r}")
             continue

@@ -184,7 +184,11 @@ def status_lines(st: StatusInfo, width: int, plain: bool = False) -> list[tuple[
     if st.ctx:
         c = st.ctx
         src = "override" if c.get("override") else str(c.get("source", ""))
-        out.append(("Context", f"{style.fmt_tokens(c.get('final') or 0)} tokens ({src})", ""))
+        if len(st.gpus) >= 2 and not c.get("override"):
+            # with two cards the start-up question offers (much) more: this one-card figure is only a first guess
+            out.append(("Context", f"~{style.fmt_tokens(c.get('final') or 0)} tokens on one GPU (you choose it when the chat starts)", ""))
+        else:
+            out.append(("Context", f"{style.fmt_tokens(c.get('final') or 0)} tokens ({src})", ""))
     if st.last_session:
         ls = st.last_session
         title = ls.get("title") or "untitled"
