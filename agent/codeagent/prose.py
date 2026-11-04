@@ -141,6 +141,13 @@ def write_prose(llm: Any, config: dict[str, Any], root: Path | str | None, reque
     except (TypeError, ValueError):
         words = DEFAULT_WORDS
     use_gpu = bool(coding.get("prose_gpu", False)) if gpu is None else gpu
+    try:
+        from agent import llm as _llm
+
+        if model in _llm._foreground_models:      # the same model is serving the chat: CPU-only options would reload it 100 % on the CPU
+            use_gpu = True
+    except Exception:  # noqa: BLE001
+        pass
     kw: dict[str, Any] = {"stream": False, "background": True, "temperature": _num(config, "prose_temperature", DEFAULT_TEMPERATURE),
                           "extra_options": {"num_predict": min(MAX_NUM_PREDICT, words * 3)}}
     kw["num_gpu"] = -1 if use_gpu else 0                                 # -1 = the server decides; 0 = CPU only, VRAM stays with the main model
