@@ -317,11 +317,25 @@ class CodeSession:
             return bool(should_autopilot(task, self.config, self.engine.root))
         return False
 
+    def _with_files(self, prompt: str) -> str:
+        """`nightage code @prompt.md` / `@spec.md` in a follow-up: the file's whole text is the task (agent.mentions)."""
+        from agent import mentions
+
+        try:
+            exp = mentions.expand(prompt)
+        except Exception:  # noqa: BLE001 - a file mention must never break a run
+            return prompt
+        say = getattr(getattr(self.app, "renderer", None), "info", None)
+        for line in [f"added {name} to the task ({n:,} characters)" for name, n in exp.files] + exp.notes:
+            if say is not None:
+                say(line)
+        return exp.text
+
     def _turn(self, prompt: str, emit: Callable[[Any], None], stop: threading.Event, approve: Any) -> None:
         self._emit, self._handle = emit, approve
         first = not self._goal_done and self._turns == 0 and self.goal is not None
         self._turns += 1
-        task = "" if prompt == CONTINUE_LABEL else prompt
+        task = "" if prompt == CONTINUE_LABEL else self._with_files(prompt)
         want_plan = first and self.plan_first and not self.resumed
         autopilot = (first and self.autopilot_flag) or self._is_big(task)
         run_mode = self.mode if first else self.engine.pol.mode

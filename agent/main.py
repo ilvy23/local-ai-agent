@@ -189,6 +189,10 @@ def code(
     if steps is not None:
         extra["steps"] = max(5, min(steps, 500))
     if old_ui:
+        if task:
+            from agent import mentions
+
+            task = mentions.expand(task).text            # `nightage code @prompt.md`: the file's text is the task
         raise typer.Exit(run_session(folder, task, new, list(file) or None, test, which, **extra))
     from agent.ui.code_app import run_code_ui
 

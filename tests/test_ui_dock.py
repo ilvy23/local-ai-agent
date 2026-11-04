@@ -284,3 +284,10 @@ def test_dock_modules_do_not_use_rich_live():
         assert "rich.live" not in src and "Live(" not in src and ".status(" not in src, mod.__name__
     src = inspect.getsource(dockmod).replace("from rich.live import Live", "")
     assert "Live(" not in src and ".status(" not in src
+
+
+def test_pasting_a_long_multi_section_spec_is_one_byte_identical_submission():
+    spec = "".join(f"## {i}. Section\n\n" + "- keep `state` 'quoted' \"too\" $x @y\n" * 40 + "\n---\n" for i in range(1, 21))
+    assert len(spec) > 20_000
+    res, _ = with_dock(Probe(), ["\x1b[200~" + spec + "\x1b[201~\r"])
+    assert res == [spec.strip()] or res == [spec]

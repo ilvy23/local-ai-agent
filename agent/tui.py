@@ -1599,6 +1599,14 @@ def run_repl(
         if web_forced and not user_input:
             console.print("[yellow]Add something to search for before /web.[/yellow]")
             continue
+        from agent import mentions
+
+        _exp = mentions.expand(user_input, limit=mentions.limit_for(config))   # `@prompt.md`: the file's text joins the message
+        for _name, _n in _exp.files:
+            console.print(f"[dim]added {_name} to the message ({_n:,} characters)[/dim]")
+        for _note in _exp.notes:
+            console.print(f"[dim]{_note}[/dim]")
+        user_input = _exp.text
 
         # Track the very first user message as the session goal so the
         # restatement reminder can reference it on long agentic runs.

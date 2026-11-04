@@ -181,6 +181,9 @@ class GoalDecision:
     message: dict[str, Any]
 
 
+GOAL_REMINDER_CHARS = 1500
+
+
 class GoalReminder:
     """Every `every_n` tool calls, a reminder of the original task so the model does not drift on long runs.
     Wraps the plain `goal_state` dict (total_calls / every_n / original_task) the front ends already keep."""
@@ -198,6 +201,9 @@ class GoalReminder:
         original_task = g.get("original_task", "")
         if not (every_n > 0 and original_task and g["total_calls"] % every_n == 0):
             return None
+        if len(original_task) > GOAL_REMINDER_CHARS:     # a long spec (an added @prompt.md) is already in the conversation:
+            original_task = (original_task[:GOAL_REMINDER_CHARS].rstrip()   # restating all of it every N calls overflowed the window
+                             + " [... shortened - the full task is in the conversation above]")
         return GoalDecision(
             f"goal check (after {g['total_calls']} tool calls)",
             {"role": "system", "content": (

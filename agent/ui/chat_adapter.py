@@ -220,6 +220,21 @@ def compact_now(client: Any, config: dict[str, Any], messages: list[dict[str, An
     return messages, {"saved_tokens": saved // 4, "before_chars": before, "after_chars": after, "compacted": int(did)}
 
 
+def _add_mentioned_files(text: str, config: dict[str, Any], ctl: Any) -> str:
+    """`@file` in the message: the file's whole text is added to it (agent.mentions), and the user is told what was added."""
+    from agent import mentions
+
+    try:
+        exp = mentions.expand(text, limit=mentions.limit_for(config))
+    except Exception:  # noqa: BLE001 - a file mention must never break a turn
+        return text
+    for name, n in exp.files:
+        ctl.event("log", text=f"added {name} to the message ({n:,} characters)")
+    for note in exp.notes:
+        ctl.event("log", text=note)
+    return exp.text
+
+
 def run_chat_turn(
     state: ChatState, prompt: str, emit: Emit | None = None, stop: threading.Event | None = None,
     approve_fn: Callable[[ApprovalRequest], bool | str] | None = None, *,
@@ -254,6 +269,8 @@ def run_chat_turn(
         ctl.event("error", message="Add something to search for before /web.", code="empty_web")
         ctl.event("done", reply="", interrupted=False, tools=[], error="empty_web")
         return TurnResult(None, error="empty_web")
+    typed = user_input
+    user_input = _add_mentioned_files(user_input, s.config, ctl)     # `@prompt.md`: the file's text becomes part of the message
     if s.goal_state.get("original_task") is None:
         s.goal_state["original_task"] = user_input
 
@@ -283,8 +300,8 @@ def run_chat_turn(
 
     if web_forced:
         web = s.registry.get("web_search")
-        ctl.event("status", state="searching", label="searching", detail=user_input, since=time.time())
-        query = tui._rewrite_search_query(user_input, s.client, s.config)
+        ctl.event("status", state="searching", label="searching", detail=typed, since=time.time())
+        query = tui._rewrite_search_query(typed, s.client, s.config)
         if query != user_input:
             ctl.event("log", text=f"searching for: {query}")
         results = web.handler(query=query) if web else "web search unavailable"
@@ -328,7 +345,7 @@ def run_chat_turn(
 
     s.store.touch_session(s.session_id)
     if s.title_pending:
-        s.store.set_session_title(s.session_id, user_input[:tui.TITLE_MAX_LEN])
+        s.store.set_session_title(s.session_id, typed[:tui.TITLE_MAX_LEN])
         s.title_pending = False
     tui._embed_message(s.vectors, s.client, s.config, user_msg_id, user_input)
 
