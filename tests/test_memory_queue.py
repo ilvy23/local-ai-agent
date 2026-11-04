@@ -91,6 +91,7 @@ def _wait(cond, timeout=5.0):
 def _dist(db, llm, sid=None, **kw):
     kw.setdefault("pause_fn", lambda c: None)
     kw.setdefault("idle_delay", 0.0)
+    kw.setdefault("after_first_reply", False)            # these tests are about the queue, not the first-reply rule
     return queue.BackgroundDistiller(CONFIG, llm, db, session_id=sid, **kw)
 
 
@@ -263,7 +264,10 @@ def test_unparseable_reply_does_not_loop_forever(tmp_path):
     store = Store(db)
     _chat(store, "hello")
     queue.step(db, Chatty(), CONFIG)
-    assert queue.pending_count(store.conn) == 0 and _facts(db) == []
+    assert queue.pending_count(store.conn) == 1                  # not skipped on the first unreadable answer: retried smaller
+    queue.step(db, Chatty(), CONFIG)
+    queue.step(db, Chatty(), CONFIG)
+    assert queue.pending_count(store.conn) == 0 and _facts(db) == []      # ... but never forever
 
 
 def test_existing_sessions_are_not_reprocessed_after_the_migration(tmp_path):

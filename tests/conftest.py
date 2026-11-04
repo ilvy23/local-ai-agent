@@ -65,10 +65,13 @@ def _isolated_config_file(monkeypatch, tmp_path_factory):
 def _fresh_model_protection():
     """agent.llm's protected models (the chat / code model of a session) are process-wide: every test starts without any."""
     from agent import llm
+    from agent.memory import recall
 
     llm.reset_protection()
+    recall.reset_heads()
     yield
     llm.reset_protection()
+    recall.reset_heads()
 
 
 def pytest_collection_modifyitems(config, items):

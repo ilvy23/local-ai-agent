@@ -206,18 +206,20 @@ def summarize(
         text = f"EARLIER LOG:\n{existing}\n\nNEW ACTIVITY TO FOLD IN:\n{text}"
     if task:
         text = f"ORIGINAL TASK:\n{_clip(task, 4000)}\n\n{text}"
+    from agent.llm import GenerationAborted, utility_chat
+
     try:
-        out = "".join(
-            llm.chat(
-                messages=[{"role": "system", "content": system or WORKLOG_SYSTEM}, {"role": "user", "content": text}],
-                model=config["models"]["background"],
-                stream=False,
-                background=True,
-            )
-        ).strip()
+        out, why = utility_chat(llm, [{"role": "system", "content": system or WORKLOG_SYSTEM}, {"role": "user", "content": text}],
+                                config["models"]["background"])
+    except GenerationAborted:
+        return None                                     # stopped for the user's turn: try again later
     except Exception as exc:  # noqa: BLE001 - compaction must never break a turn
         logger.warning("Work-log compaction failed: %s", exc)
         return None
+    if why == "length":
+        logger.warning("Work-log compaction was cut off by the output cap; keeping the previous summary")
+        return None                                     # a cut-off log would lose its open items
+    out = out.strip()
     return out or None
 
 

@@ -101,18 +101,14 @@ _VERDICT_RE = re.compile(r"\b(SAME|UPDATE|DIFFERENT)\b", re.IGNORECASE)
 def judge_overlap(llm: Any, config: dict[str, Any], old: str, new: str) -> str:
     """"same" | "update" | "different". Any failure or unclear answer is "different": keep
     both, which is what happened before this check existed - never lose a fact on a guess."""
+    from agent.llm import GenerationAborted, utility_chat
+
     try:
-        reply = "".join(
-            llm.chat(
-                messages=[
-                    {"role": "system", "content": _JUDGE_PROMPT},
-                    {"role": "user", "content": f"OLD: {old}\nNEW: {new}"},
-                ],
-                model=config["models"]["background"],
-                stream=False,
-                background=True,
-            )
-        )
+        reply, _why = utility_chat(llm, [{"role": "system", "content": _JUDGE_PROMPT},
+                                         {"role": "user", "content": f"OLD: {old}\nNEW: {new}"}],
+                                   config["models"]["background"], num_predict=512)
+    except GenerationAborted:
+        raise                                           # the user started a turn: stop the whole step, the queue keeps the work
     except Exception as exc:  # noqa: BLE001 - a failed judgement must not break distillation
         logger.warning("Fact overlap check failed: %s", exc)
         return "different"
@@ -252,18 +248,17 @@ def _cosine(a: list[float], b: list[float]) -> float:
 
 def extract_candidates(llm: Any, config: dict[str, Any], texts: list[str]) -> list[dict[str, str]] | None:
     """One background-model call over the user's own words. None = the reply held no parseable JSON array."""
-    reply = "".join(
-        llm.chat(
-            messages=[
-                {"role": "system", "content": _PROMPT},
-                {"role": "user", "content": "\n".join(texts)},
-            ],
-            model=config["models"]["background"],
-            stream=False,
-            background=True,
-        )
-    )
-    return _extract_facts_with_confidence(reply)
+    return extract_candidates_checked(llm, config, texts)[0]
+
+
+def extract_candidates_checked(llm: Any, config: dict[str, Any], texts: list[str]) -> tuple[list[dict[str, str]] | None, str]:
+    """(candidates or None when the reply held no parseable JSON array, done_reason). done_reason "length" means the output cap
+    cut the reply off - its facts are incomplete, so the caller must not treat the batch as done."""
+    from agent.llm import utility_chat
+
+    reply, why = utility_chat(llm, [{"role": "system", "content": _PROMPT}, {"role": "user", "content": "\n".join(texts)}],
+                              config["models"]["background"])
+    return _extract_facts_with_confidence(reply), why
 
 
 def plan_facts(

@@ -107,13 +107,14 @@ class Plan:
         return [f"  {i.id}  {'done' if i.done else 'open'}  {i.text}" for i in self.items]
 
 
-def generate(llm: Any, config: dict[str, Any], task: str) -> Plan | None:
-    """Ask the background model for the checklist. None on failure or if it came back empty."""
+def generate(llm: Any, config: dict[str, Any], task: str, model: str | None = None) -> Plan | None:
+    """Ask the model for the checklist (`model`, default the background model - the coding agent passes its own, so no second
+    model is loaded and its cached conversation survives). None on failure or if it came back empty."""
+    from agent.llm import utility_chat
+
     try:
-        reply = "".join(llm.chat(
-            messages=[{"role": "system", "content": _SYSTEM}, {"role": "user", "content": task[:6000]}],
-            model=config["models"]["background"], stream=False, background=True,
-        ))
+        reply, _why = utility_chat(llm, [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": task[:6000]}],
+                                   model or config["models"]["background"])
     except Exception:  # noqa: BLE001 - a missing checklist must never block the task
         return None
     items = parse_items(reply)

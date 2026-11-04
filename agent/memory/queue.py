@@ -38,8 +38,10 @@ BATCH_MESSAGES = 8          # user messages per extraction call
 MESSAGE_CHARS = 1500        # a pasted article is not a statement about the user: only its start is read
 BATCH_CHARS = 6000
 MAX_LEARN_ATTEMPTS = 5
-IDLE_DELAY = 1.5            # seconds of quiet after a turn before background work starts
+IDLE_DELAY = 1.5            # seconds of quiet after a turn before background work starts (when `memory.idle_seconds` is 0)
+IDLE_SECONDS = 30.0         # default `memory.idle_seconds`: background work waits until the user has been quiet this long
 POLL_SECONDS = 20.0         # how often a paused or failed worker looks again
+MAX_BATCH_FAILS = 3         # an unparseable / cut-off extraction is retried with half the batch, at most this often
 
 
 def settings(config: dict[str, Any]) -> dict[str, Any]:
@@ -48,6 +50,9 @@ def settings(config: dict[str, Any]) -> dict[str, Any]:
         "every_turns": max(1, int(m.get("distill_every_turns", 1) or 1)),
         "batch": max(1, int(m.get("distill_batch_messages", BATCH_MESSAGES) or BATCH_MESSAGES)),
         "exit_wait": max(0.0, float(m.get("exit_wait_seconds", 3.0) if m.get("exit_wait_seconds") is not None else 3.0)),
+        # Background work replaces the conversation Ollama keeps cached (one slot): it runs only after this much quiet, never
+        # while you are in the middle of a conversation, and never before the first reply of a session.
+        "idle_seconds": max(0.0, float(m.get("idle_seconds", IDLE_SECONDS) if m.get("idle_seconds") is not None else IDLE_SECONDS)),
     }
 
 
@@ -96,9 +101,10 @@ def distill_batch(store: Store, vectors: VectorIndex, llm: Any, config: dict[str
     and leave the queue untouched."""
     conn = store.conn
     start = watermark(conn, session_id)
+    fails = _BATCH_FAILS.get((str(store.db_path), session_id, start), 0)
     rows = conn.execute(
         "SELECT id, content FROM messages WHERE session_id = ? AND role = 'user' AND id > ? ORDER BY id LIMIT ?",
-        (session_id, start, settings(config)["batch"]),
+        (session_id, start, max(1, settings(config)["batch"] >> fails)),       # a failed batch is retried at half the size
     ).fetchall()
     if not rows:
         return None
@@ -115,9 +121,20 @@ def distill_batch(store: Store, vectors: VectorIndex, llm: Any, config: dict[str
         end_id = r["id"]
     saved: list[tuple[int, distill.PlannedFact]] = []
     if texts:
-        candidates = distill.extract_candidates(llm, config, texts)      # may raise: queue untouched
-        if candidates is None:
-            logger.warning("Fact extraction returned no parseable JSON array; skipping these messages.")
+        candidates, why = distill.extract_candidates_checked(llm, config, texts)      # may raise: queue untouched
+        if candidates is None or why == "length":
+            # cut off by the output cap or no parseable JSON: the facts are missing or incomplete, so the mark must NOT move -
+            # the same messages are tried again in a smaller batch, and only skipped after MAX_BATCH_FAILS attempts
+            key = (str(store.db_path), session_id, start)
+            fails = _BATCH_FAILS.get(key, 0) + 1
+            if fails < MAX_BATCH_FAILS:
+                _BATCH_FAILS[key] = fails
+                logger.info("Fact extraction %s; retrying with fewer messages", "was cut off" if why == "length" else "was unreadable")
+                return 0
+            _BATCH_FAILS.pop(key, None)
+            logger.warning("Fact extraction returned no usable JSON array %d times; skipping these messages.", fails)
+            candidates = None
+        _BATCH_FAILS.pop((str(store.db_path), session_id, start), None)
         planned = distill.plan_facts(store, vectors, llm, config, candidates or []) if candidates else []
         saved = _commit(store, session_id, start, end_id, planned)
     else:
@@ -127,6 +144,9 @@ def distill_batch(store: Store, vectors: VectorIndex, llm: Any, config: dict[str
             store.deactivate_fact(old)
         distill.index_fact(vectors, fact_id, p)
     return len(saved)
+
+
+_BATCH_FAILS: dict[tuple[str, int, int], int] = {}      # (db, session, mark) -> failed extraction attempts
 
 
 def _commit(store: Store, session_id: int, start: int, end_id: int, planned: list[distill.PlannedFact]
@@ -201,6 +221,11 @@ def step(db_path: Path | str, llm: Any, config: dict[str, Any], *, active_sessio
     if _background_model_missing(llm, config):
         return False                          # the notes model is not installed: leave the work queued instead of failing at every try
     with Store(Path(db_path)) as store:
+        if active_session is not None:
+            from agent.memory import recall
+
+            if recall.slide_if_needed(store, llm, config, active_session):
+                return True                   # the chat's history window was cut back and summarised: off the reply path
         pend = pending_by_session(store.conn)
         for sid, n in pend.items():
             if sid == active_session and n < every:
@@ -267,12 +292,17 @@ class BackgroundDistiller:
     """Takes queued work whenever the chat is idle. `busy(True/False)` brackets every turn; `stop()` is the exit."""
 
     def __init__(self, config: dict[str, Any], llm: Any, db_path: Path | str, *, session_id: int | None = None,
-                 pause_fn: Callable[[dict], str | None] | None = None, idle_delay: float = IDLE_DELAY,
-                 poll: float = POLL_SECONDS) -> None:
+                 pause_fn: Callable[[dict], str | None] | None = None, idle_delay: float | None = None,
+                 poll: float = POLL_SECONDS, after_first_reply: bool = True) -> None:
         self.config, self.llm, self.db_path = config, llm, Path(db_path)
         self.session_id = session_id
         self.pause_fn = pause_fn or governor_pause
+        if idle_delay is None:
+            idle_delay = settings(config)["idle_seconds"] or IDLE_DELAY
         self.idle_delay, self.poll = idle_delay, poll
+        self.after_first_reply = after_first_reply          # nothing at all before the first reply of the session
+        self._turns = 0
+        self._cancel = threading.Event()                    # set by busy(True): a running helper call stops at once
         self._busy = False
         self._idle_since = time.monotonic()
         self._stop = threading.Event()
@@ -304,9 +334,13 @@ class BackgroundDistiller:
         return self
 
     def busy(self, value: bool) -> None:
-        """True while the chat model works on a turn (nothing starts then); False (and a wake-up) when it is idle."""
+        """True while the chat model works on a turn (nothing starts then, and a step already running is cancelled: its helper
+        call closes the connection so the reply does not wait behind it); False (and a wake-up) when it is idle again."""
         self._busy = value
-        if not value:
+        if value:
+            self._turns += 1
+            self._cancel.set()
+        else:
             self._idle_since = time.monotonic()
             self._wake.set()
 
@@ -329,18 +363,28 @@ class BackgroundDistiller:
             self._wake.wait(timeout=max(self.poll, backoff))
             self._wake.clear()
             backoff = 0.0
+            worked = False
             while not self._stop.is_set():
                 if self._busy:
                     break                           # busy(False) wakes us again
+                if self.after_first_reply and self._turns == 0:
+                    break                           # the session has not had its first reply yet: busy(False) after it wakes us
                 wait = self.idle_delay - (time.monotonic() - self._idle_since)
                 if wait > 0:
                     self._stop.wait(min(wait, 0.25))
                     continue
                 if self.pause_fn(self.config):
                     break
+                cancel = threading.Event()
+                self._cancel = cancel
                 try:
                     self.in_flight = True
-                    did = step(self.db_path, self.llm, self.config, active_session=self.session_id)
+                    from agent.llm import GenerationAborted, cancel_scope
+
+                    with cancel_scope(cancel):
+                        did = step(self.db_path, self.llm, self.config, active_session=self.session_id)
+                except GenerationAborted:
+                    break                           # the user started a turn: the work stays queued for the next quiet moment
                 except Exception as exc:  # noqa: BLE001 - remembering is a bonus; the queue keeps the work
                     self.errors += 1
                     self._failed(exc)
@@ -350,8 +394,29 @@ class BackgroundDistiller:
                     self.in_flight = False
                 if not did:
                     break
+                worked = True
                 self.errors = 0
                 self.steps += 1
+            if worked and not self._busy and not self._stop.is_set():
+                self._reprime()
+
+    def _reprime(self) -> None:
+        """After background work on the chat model: put the conversation back into the server's cache (the next turn's prefix,
+        or the last request again), so the next reply starts without re-reading the whole chat. Runs while the user is idle."""
+        models = self.config.get("models") or {}
+        chat = str(models.get("chat") or "")
+        if not chat or not hasattr(self.llm, "reprime") or str(models.get("background") or "") != chat:
+            return                                  # a separate helper model never touched the chat model's cache
+        try:
+            messages = None
+            if self.session_id is not None:
+                from agent.memory import recall
+
+                with Store(self.db_path) as store:
+                    messages = recall.prompt_prefix(store, self.config, self.session_id)
+            self.llm.reprime(chat, messages)
+        except Exception:  # noqa: BLE001 - only an optimisation
+            pass
 
 
 def finish(distiller: BackgroundDistiller | None, store: Store, session_id: int | None, tool_exchanges: list[tuple],

@@ -640,7 +640,7 @@ class CodeEngine:
         if plan_mod.should_create(user_text) and (self.plan.plan is None or done_plan):
             # a finished list does not cover a new big task in the same session (seen live: the next four stages ran without one)
             with self.console.status("[dim]making an acceptance list…[/dim]", spinner="dots"):
-                self.plan.plan = plan_mod.generate(self.llm, self.config, user_text)
+                self.plan.plan = plan_mod.generate(self.llm, self.config, user_text, model=self.model)   # no second model, no cache loss
             if self.plan.plan:
                 self._insert_plan()
                 for line in self.plan.plan.lines():

@@ -319,6 +319,7 @@ def _remember_ctx(model: str, num_ctx: int | None) -> None:
 # (protect_roles: before the memory catch-up's first background call), by every foreground request and by preload().
 _protected: dict[str, int | None] = {}
 _protect_lock = threading.Lock()
+_last_payload: dict[str, dict[str, Any]] = {}      # model -> the last foreground /api/chat payload (see OllamaClient.reprime)
 
 
 def mark_foreground(models: Any, num_ctx: int | None = None) -> None:
@@ -355,6 +356,7 @@ def protected_ctx(model: str) -> int | None:
 def reset_protection() -> None:
     with _protect_lock:
         _protected.clear()
+        _last_payload.clear()
 
 
 def protect_roles(config: dict | None) -> None:
@@ -419,6 +421,22 @@ def _accepts(fn: Callable[..., Any], name: str) -> bool:
     return name in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
+# A cancel event for every helper call made on this thread / context (the memory worker sets one per step, and sets the event
+# the moment the user starts a turn: the helper call closes its connection and the server is free for the reply at once).
+import contextvars as _contextvars
+
+_CANCEL: _contextvars.ContextVar[threading.Event | None] = _contextvars.ContextVar("helper_cancel", default=None)
+
+
+@contextlib.contextmanager
+def cancel_scope(event: threading.Event | None):
+    token = _CANCEL.set(event)
+    try:
+        yield event
+    finally:
+        _CANCEL.reset(token)
+
+
 def utility_chat(client: Any, messages: list[dict[str, Any]], model: str, *, json_mode: bool = False,
                  cancel: threading.Event | None = None, num_predict: int | None = None,
                  temperature: float | None = None) -> tuple[str, str]:
@@ -427,6 +445,9 @@ def utility_chat(client: Any, messages: list[dict[str, Any]], model: str, *, jso
     says why it stopped. Returns (text, done_reason); done_reason "length" means the output cap cut it off. Raises like
     client.chat (GenerationAborted when `cancel` stopped it)."""
     fn = client.chat
+    cancel = cancel if cancel is not None else _CANCEL.get()
+    if cancel is not None and cancel.is_set():
+        raise GenerationAborted("stopped")
     usage: dict[str, Any] = {}
     kwargs: dict[str, Any] = {"messages": messages, "model": model, "stream": False, "background": True}
     if _accepts(fn, "usage"):
@@ -1009,6 +1030,25 @@ class OllamaClient:
         except httpx.HTTPError:
             return False
 
+    def reprime(self, model: str, messages: list[dict[str, Any]] | None = None) -> bool:
+        """Restore the server's cached conversation after background work replaced it: replay the last real chat request for
+        `model` (or the same request with `messages`, e.g. the next turn's prefix) generating ONE token. The server then holds
+        that prompt again, so the next reply starts without re-reading the whole chat. Same model, tools, think and options as
+        the chat - nothing that would reload the model. False when there is nothing to replay or it failed."""
+        base = _last_payload.get(model)
+        if not base:
+            return False
+        payload = {**base, "stream": False}
+        if messages is not None:
+            payload["messages"] = _adapt_messages(model, messages)
+        payload["options"] = {**(base.get("options") or {}), "num_predict": 1}
+        try:
+            response = self._client_for(model).post("/api/chat", json=payload)
+            response.raise_for_status()
+            return True
+        except httpx.HTTPError:
+            return False
+
     def chat(
         self,
         messages: list[dict[str, str]],
@@ -1234,6 +1274,7 @@ class OllamaClient:
         if extra_options:
             options.update(extra_options)
         payload["options"] = options
+        _last_payload[model] = payload                 # what reprime() replays to restore the server's prompt cache
         content: list[str] = []
         tool_calls: list[dict[str, Any]] = []
         final: dict[str, Any] = {}
@@ -1332,6 +1373,7 @@ class OllamaClient:
         if extra_options:
             options.update(extra_options)
         payload["options"] = options
+        _last_payload[model] = payload                 # what reprime() replays to restore the server's prompt cache
         response = self._client_for(model).post("/api/chat", json=payload)
         response.raise_for_status()
         body = response.json()
