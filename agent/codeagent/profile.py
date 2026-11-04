@@ -8,6 +8,7 @@ cheap, deterministic and the same across runs - which also keeps the start of th
 from __future__ import annotations
 
 import functools
+import os
 import json
 import re
 import shlex
@@ -31,6 +32,7 @@ class Profile:
     run_hint: str | None = None
     tools: list[str] = field(default_factory=list)          # available helpers: ruff, pytest, mypy, node ...
     notes: list[str] = field(default_factory=list)
+    ruff: str | None = None                                 # how to call ruff HERE (".venv/bin/ruff", "ruff", "uv run --frozen ruff")
 
     def text(self) -> str:
         lines = [f"PROJECT {self.root.name}  ({', '.join(self.kinds) or 'no code yet'})",
@@ -92,6 +94,75 @@ def pytest_command() -> str:
     return "uv run --no-project --with pytest python3 -m pytest -q -x"
 
 
+def _venv_python(root: Path) -> Path | None:
+    for name in (".venv", "venv"):
+        for rel in ("bin/python", "Scripts/python.exe"):
+            cand = root / name / rel
+            if cand.exists():
+                return cand
+    return None
+
+
+@functools.lru_cache(maxsize=64)
+def _python_has(python: str, module: str) -> bool:
+    try:
+        return subprocess.run([python, "-c", f"import {module}"], capture_output=True, timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def project_pytest_command(root: Path) -> str | None:
+    """pytest inside the PROJECT's own environment, or None (then pytest_command(): the system-wide one). The tests import the
+    project's dependencies - run with a bare system python they failed with ModuleNotFoundError, reported as real failures."""
+    if (root / "uv.lock").exists() and shutil.which("uv"):
+        return "uv run --frozen --with pytest python -m pytest -q -x"
+    venv = _venv_python(root)
+    if venv is not None and _python_has(str(venv), "pytest"):
+        return f"{shlex.quote(os.path.relpath(venv, root))} -m pytest -q -x"
+    if (root / "poetry.lock").exists() and shutil.which("poetry"):
+        return "poetry run python -m pytest -q -x"
+    if (root / "pdm.lock").exists() and shutil.which("pdm"):
+        return "pdm run python -m pytest -q -x"
+    return None
+
+
+def ruff_command(root: Path) -> str | None:
+    """How to call ruff in this project, or None when it is nowhere: the project's venv, PATH, or the uv project's own ruff."""
+    for name in (".venv", "venv"):
+        cand = root / name / "bin" / "ruff"
+        if cand.exists():
+            return shlex.quote(os.path.relpath(cand, root))
+    if shutil.which("ruff"):
+        return "ruff"
+    lock = root / "uv.lock"
+    try:
+        if lock.exists() and shutil.which("uv") and re.search(r'(?m)^name = "ruff"$', lock.read_text(errors="replace")):
+            return "uv run --frozen ruff"
+    except OSError:
+        pass
+    return None
+
+
+def targeted_tests(root: Path, edited: list[str]) -> list[str]:
+    """Test files that most likely cover the edited Python files - an edited test file itself, else test_<module>.py next to it, in
+    tests/ or tests/<its folder>/. They run before the full suite: a failure shows up in seconds, focused on the change."""
+    found: list[str] = []
+    for rel in edited:
+        if not rel.endswith(".py"):
+            continue
+        p = Path(rel)
+        if p.stem.startswith("test_") or p.stem.endswith("_test"):
+            cands = [p]
+        else:
+            cands = [p.parent / f"test_{p.stem}.py", Path("tests") / f"test_{p.stem}.py", Path("tests") / p.parent / f"test_{p.stem}.py",
+                     Path("test") / f"test_{p.stem}.py"]
+        for c in cands:
+            key = c.as_posix()
+            if (root / c).is_file() and key not in found:
+                found.append(key)
+    return found[:8]
+
+
 def _has(root: Path, *names: str) -> bool:
     return any((root / n).exists() for n in names)
 
@@ -121,14 +192,19 @@ def detect(root: Path | str, override_test: str | None = None) -> Profile:
         except (OSError, tomllib.TOMLDecodeError):
             data = {}
         if "pytest" in json.dumps(data.get("tool", {})) or pytest_cfg:
-            prof.test_cmd = pytest_command()
+            prof.test_cmd = project_pytest_command(root) or pytest_command()
         elif has_tests:
-            prof.test_cmd = "python3 -m unittest discover -q" if not probe_python()["pytest"] and not probe_python()["uv"] else pytest_command()
+            prof.test_cmd = project_pytest_command(root) or (
+                "python3 -m unittest discover -q" if not probe_python()["pytest"] and not probe_python()["uv"] else pytest_command())
         mains = [p.name for p in py if p.name in ("main.py", "app.py", "__main__.py", "game.py", "cli.py")]
         if mains:
             prof.run_hint = f"python3 {mains[0]}"
-        if "ruff" in json.dumps(data.get("tool", {})) or shutil.which("ruff"):
-            prof.lint_cmd = "ruff check ."
+        ruff_configured = "ruff" in json.dumps(data.get("tool", {}))
+        prof.ruff = ruff_command(root) if (ruff_configured or shutil.which("ruff")) else None
+        if prof.ruff:
+            prof.lint_cmd = f"{prof.ruff} check ."
+        elif ruff_configured:
+            prof.notes.append("ruff is configured in pyproject.toml but not installed here - lint is skipped (it is not a failure)")
         elif shutil.which("pyflakes"):
             prof.lint_cmd = "python -m pyflakes ."
         for t in ("ruff", "mypy", "pyright", "pytest", "black"):
@@ -227,8 +303,12 @@ def check_commands(prof: Profile, edited: list[str], check_cmd: str | None = Non
         quoted = " ".join(shlex.quote(p) for p in py[:40])           # any file name, quotes and unicode included
         cmds.append(f"python3 -m py_compile {quoted}")
     if prof.lint_cmd and py and "ruff" in prof.lint_cmd:
-        cmds.append(f"ruff check --select E9,F63,F7,F82,F821,F822,F823 {quoted}")
+        cmds.append(f"{prof.ruff or 'ruff'} check --select E9,F63,F7,F82,F821,F822,F823 {quoted}")
     cmds += _syntax_commands(edited, check_cmd)
     if prof.test_cmd:
+        if "pytest" in prof.test_cmd and py:
+            focus = targeted_tests(prof.root, edited)
+            if focus:
+                cmds.append(f"{prof.test_cmd} " + " ".join(shlex.quote(t) for t in focus))   # the tests of the change first
         cmds.append(prof.test_cmd)
     return cmds

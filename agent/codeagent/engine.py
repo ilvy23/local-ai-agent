@@ -2027,7 +2027,7 @@ class CodeEngine:
             if verdict.verdict == "ask" and not self._approve(f"run  {_one_line(cmd, 100)}", "verification"):
                 self.console.print("    [dim]skipped[/dim]")
                 return None                     # declined (or no terminal): the user's call; nothing is recorded as verified either
-            code, out, secs = self.tools._exec(cmd, 300)
+            code, body, secs, out = self.tools.run_check(cmd, 300)     # protect snapshot + condensed output, like `run`
             self.ctx.ledger.note_run(self.ctx.step, cmd, code, out.strip().splitlines()[-1] if out.strip() else "")
             if code == 127:                                             # the check's program is not installed: not a failure of the code
                 self.console.print(f"    [yellow]not run: command not found ({secs:.1f}s)[/yellow]")
@@ -2036,7 +2036,7 @@ class CodeEngine:
             self.tools.evidence.append((self.ctx.step, cmd, code))
             if code != 0:
                 self.console.print(f"    [red]failed ({secs:.1f}s)[/red]")
-                return verify.failure_message(cmd, f"exit code {code}\n{cap_output(out.strip(), 600, 1800)}")
+                return verify.failure_message(cmd, f"exit code {code}\n{body}")
             self.console.print(f"    [green]passed ({secs:.1f}s)[/green]")
         if self.verify_not_run:
             return None                         # nothing failed, but nothing proves it works either: the caller labels it NOT VERIFIED

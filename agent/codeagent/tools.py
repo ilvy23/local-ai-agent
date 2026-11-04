@@ -1289,6 +1289,19 @@ class CodeTools:
         head = f"exit code {label}  ({secs:.1f}s)\n{body}" if body else f"exit code {label}  ({secs:.1f}s)  (no output)"
         return head + ("\n" + changed if changed else "") + self._tui_redirect(command, stdin, raw)
 
+    def run_check(self, command: str, timeout: int = 300) -> tuple[int | None, str, float, str]:
+        """A verification command through the same safety net as `run`: read-only / protected files it touches are restored, and
+        the output comes back condensed (pytest failures + summary, traceback snippets) for the failure message.
+        Returns (exit code, condensed output, seconds, raw output)."""
+        snap = snapshot_tree(self.root, keep_ro=True, protect=self.protect)
+        code, out, secs = self._exec(command, timeout)
+        changed = self._after_run(snap)
+        raw = out.strip()
+        body = outputs.summarize_pytest(raw)
+        extra = outputs.traceback_snippets(self.root, body) if code not in (0, None) else ""
+        body = cap_output(body.strip(), 600, 1800) + extra
+        return code, body + ("\n" + changed if changed else ""), secs, raw
+
     def _tui_redirect(self, command: str, stdin: str | None, output: str) -> str:
         """Seen live: the prompt sentence about tui_smoke was in context and the model never called it - it faked the screen and proved a symptom
         patch. So `run` points at the tool when the command is such a case (tuihint.py): one line, the long form once per program, and for a

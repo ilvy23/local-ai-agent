@@ -69,4 +69,12 @@ def summarize_pytest(output: str, max_chars: int = 2200) -> str:
     out = "\n".join(dict.fromkeys(keep))
     if not out.strip():
         return output
-    return "PYTEST (condensed - failing tests, assertions, summary):\n" + out[:max_chars]
+    if len(out) > max_chars:
+        # keep the END - the "short test summary info" lines and the final count - and cut the middle: a head-only cut lost
+        # exactly the part that says which tests failed and how many
+        lines = out.splitlines()
+        summary = [ln for ln in lines if ln.startswith(("FAILED", "ERROR"))][-12:]
+        final = [ln for ln in lines if re.search(r"\b\d+ (failed|passed|error)", ln)][-1:]
+        tail = "\n".join(dict.fromkeys(summary + final))[-(max_chars // 2):]
+        out = out[:max(200, max_chars - len(tail) - 30)] + "\n[... cut ...]\n" + tail
+    return "PYTEST (condensed - failing tests, assertions, summary):\n" + out
