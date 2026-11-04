@@ -33,6 +33,7 @@ EXCLUDED_DIRS = {".git", "node_modules", ".venv", "$RECYCLE.BIN", "System Volume
 # Never walked into from a search that starts above them (pseudo filesystems: endless or huge, never what the user means).
 _PSEUDO_DIRS = ("/proc", "/sys", "/dev")
 SEARCH_TIME_BUDGET_S = 20.0
+WHOLE_READ_BYTES = 2_000_000  # read_file reads files up to this size completely
 SNIPPET_CHARS = 240           # a matching line longer than this (minified JS, a data dump) is shown around the match only
 # Where external drives actually show up on this system - /media and
 # /run/media are one level deeper (<root>/<username>/<drive>), /mnt drives
@@ -116,7 +117,8 @@ def read_file(path: str, max_chars: int | None = None, **_kwargs: Any) -> str:
     if not stat.S_ISREG(st.st_mode):
         # a FIFO blocks forever, /dev/zero never ends: only regular files are read
         return f"Error: {p} is not a regular file (a device, pipe or socket), so it is not read."
-    budget = max_chars * 4 + 4096                     # enough bytes for max_chars characters in any encoding
+    # small files whole (an exact "first N of M chars"); a big one only as far as can be shown (a multi-GB log never fills memory)
+    budget = max(max_chars * 4 + 4096, WHOLE_READ_BYTES)
     try:
         with p.open("rb") as f:
             raw = f.read(budget)

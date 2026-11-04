@@ -28,6 +28,7 @@ def test_read_file_refuses_dev_zero():
 
 
 def test_read_file_reads_a_big_file_only_up_to_the_cap(tmp_path, monkeypatch):
+    monkeypatch.setattr(files, "WHOLE_READ_BYTES", 50_000)          # "big" = over the whole-read size
     big = tmp_path / "big.log"
     big.write_text("x" * 200_000 + "ü" * 10)
     out = files.read_file(str(big), max_chars=1000)
