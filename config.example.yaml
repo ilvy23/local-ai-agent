@@ -11,6 +11,9 @@ models:
   embed: bge-m3
   unrestricted: qwen2.5:7b    # only used by the optional WhatsApp analysis module
   weekly: ''
+  # gpt-oss style models: how long they think in the chat and the coding agent (low | medium | high);
+  # helper jobs (memory, summaries) always use low
+  reasoning_effort: medium
   chat_num_ctx: 16384
   coding: deepseek-r1:7b
   reasoning: deepseek-r1:7b
