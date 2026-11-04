@@ -36,7 +36,8 @@ _cache: dict[str, tuple[float, dict[str, int] | None]] = {}
 _caps: dict[str, bool] = {}
 
 
-def installed(url: str, *, timeout: float = 1.5, now: float | None = None, use_cache: bool = True) -> dict[str, int] | None:
+def installed(url: str, *, timeout: float = 1.5, now: float | None = None, use_cache: bool = True,
+              include_vulkan: bool = True) -> dict[str, int] | None:
     """{name: size in bytes} of the installed models, or None when the server does not answer."""
     t = time.monotonic() if now is None else now
     hit = _cache.get(url)
@@ -48,8 +49,26 @@ def installed(url: str, *, timeout: float = 1.5, now: float | None = None, use_c
         data: dict[str, int] | None = {m["name"]: int(m.get("size", 0)) for m in r.json().get("models", []) if m.get("name")}
     except (httpx.HTTPError, ValueError, KeyError, TypeError, OSError):
         data = None
+    if data is not None and include_vulkan:
+        data = {**_vulkan_models(url, timeout), **data}     # a model pulled only into the second (Vulkan) Ollama is installed too
     _cache[url] = (t, data)
     return data
+
+
+def _vulkan_models(url: str, timeout: float) -> dict[str, int]:
+    """The models of the second (Vulkan) Ollama server, when one answers and it is not `url` itself; {} otherwise."""
+    try:
+        from agent import gpumode
+        from agent.llm import vulkan_base_url
+
+        if not gpumode.current_mode():                     # no GPU mode chosen (or none detected): only one server is in use
+            return {}
+        vk = vulkan_base_url()
+        if vk.rstrip("/") == url.rstrip("/"):
+            return {}
+        return installed(vk, timeout=min(timeout, 0.8), include_vulkan=False) or {}
+    except Exception:  # noqa: BLE001 - the second server is optional
+        return {}
 
 
 def known_missing(url: str, model: str) -> bool:
