@@ -667,3 +667,70 @@ def test_redirect_to_dev_null_followed_by_a_shell_operator_is_not_sensitive():
                 "ls x 2>/dev/null|head"):
         assert classify_command(cmd, {}) < RiskLevel.BLOCKED, cmd
     assert classify_command("echo x > /etc/passwd;", {}) >= RiskLevel.DANGEROUS
+
+
+# --- Round 5: the shell lexer (agent.shellparse) ----------------------------------------------------------------------------
+# Every line here was rated SAFE or CAUTION before: newline / `&` / `|&` were not separators, escaped quotes and a stray `{`
+# hid separators, redirects glued to a word or written as `&>`, `>|`, `<>`, `>&FILE` were not seen, reserved words, function
+# bodies, `eval`, `watch`, `su -c`, `env -S`, `xargs -I` and unknown runners hid their payload, and a variable or a glob as the
+# command word was taken at face value.
+
+ROUND5_BLOCKED = [
+    "ls\nrm -rf ~", "ls & rm -rf ~", "ls |& rm -rf ~", "echo a & reboot",
+    'echo \\" ; rm -rf ~ ; echo \\"', "echo {; rm -rf ~",
+    "do rm -rf ~", "for i in 1; do rm -rf ~; done", "if true; then reboot; fi", "! reboot",
+    "f(){ rm -rf ~; }; f", "function f { reboot; }",
+    "x=rm; $x -rf ~", "eval 'rm -rf ~'", "watch -n 1 'rm -rf ~'", "su -c 'rm -rf ~' root",
+    "env -S'rm -rf ${HOME}'", "env --split-string='rm -rf ~'", "env -S 'rm -rf ~'", "env -u FOO rm -rf ~",
+    "xargs -I {} rm -rf ~", "taskset 1 rm -rf ~", "busybox rm -rf ~",
+    "echo hi>~/.bashrc", "echo x &>~/.bashrc", "cat f 1<> ~/.bashrc", "echo x >| ~/.bashrc", "echo x >&~/.bashrc",
+    "(rm -rf /) 2>/dev/null", "cat <<EOF\n$(rm -rf ~)\nEOF", "ls # harmless\nrm -rf /",
+]
+
+
+@pytest.mark.parametrize("command", ROUND5_BLOCKED)
+def test_round5_hidden_payloads_are_blocked(command):
+    assert classify(command) is RiskLevel.BLOCKED
+
+
+ROUND5_DANGEROUS = [
+    "cat <(rm -rf ~/x)", "find . -fprint ~/.bashrc", "find . -fls out", "rg --pre=bash x .", "git diff --output=/etc/x",
+    "{rm,-rf,~}", "/bin/r? -rf x", "$'\\x72m' -rf ~", '"$cmd" -rf ~', "case x in a) rm;; esac",
+    "GIT_EXTERNAL_DIFF=x git diff", "PATH=. ls", "LD_PRELOAD=/tmp/x.so cat f", "bash <<EOF\nls\nEOF",
+    "date -s 2020-01-01", "crontab f", "flock /tmp/l rm x", "chroot /mnt sh",
+]
+
+
+@pytest.mark.parametrize("command", ROUND5_DANGEROUS)
+def test_round5_new_rules_are_at_least_dangerous(command):
+    assert classify(command) >= RiskLevel.DANGEROUS
+
+
+ROUND5_SAFE = [
+    "ls 2>&1", "ls &>/dev/null", "grep -r foo . 2>/dev/null | head", "ls x 2>/dev/null && echo ok",
+    "for f in a b; do echo $f; done", "cat <<'EOF'\nrm -rf ~ don't\nEOF", "date -Iseconds", "[ -f x ] && cat x",
+    "test -d build", "ls -la # list everything",
+]
+
+
+@pytest.mark.parametrize("command", ROUND5_SAFE)
+def test_round5_harmless_lines_stay_safe(command):
+    assert classify(command) is RiskLevel.SAFE
+
+
+def test_round5_heredoc_file_write_asks_instead_of_demanding_yes():
+    # Before: the apostrophe in the body broke the whole-line parse -> DANGEROUS (typed "yes"). Now: a plain write -> CAUTION.
+    assert classify("cat > f.py <<'EOF'\nprint(\"don't\")\nEOF") is RiskLevel.CAUTION
+
+
+def test_round5_wrapper_keeps_the_redirect_of_its_payload():
+    assert classify("env echo hi > out.txt") is RiskLevel.CAUTION
+    assert classify("timeout 5 echo $(date)") is RiskLevel.CAUTION
+
+
+def test_round5_block_reason_comes_from_the_classifier_itself():
+    from agent.safety import block_reason
+
+    assert block_reason("ls\nrm -rf ~", BASE_CONFIG) == "rm targeting ~"
+    assert block_reason("eval 'reboot'", BASE_CONFIG) == "reboot (power state change)"
+    assert block_reason(":(){ :|:& };:", BASE_CONFIG) == "fork bomb"

@@ -12,10 +12,13 @@ malicious config cannot make `rm -rf /` runnable.
 
 from __future__ import annotations
 
+import contextvars
 import re
 import shlex
 from enum import IntEnum
 from typing import Any
+
+from agent import shellparse
 
 
 class RiskLevel(IntEnum):
@@ -33,6 +36,7 @@ _BUILTIN_SAFE_COMMANDS = frozenset(
         "ls", "cat", "head", "tail", "grep", "rg", "find", "pwd", "echo",
         "date", "whoami", "uname", "df", "du", "free", "ps", "top", "which",
         "file", "stat", "wc", "uptime",
+        "test", "[", "true", "false",      # side-effect-free shell builtins
     }
 )
 
@@ -51,6 +55,8 @@ _DANGEROUS_EXECUTABLES = frozenset(
         "systemctl", "service",
         "apt", "apt-get", "dnf", "yum", "pacman", "snap",
         "kill", "pkill", "killall",
+        # run a command as another user / in another root or namespace, or later (at/batch) / under a lock
+        "su", "runuser", "chroot", "nsenter", "unshare", "setpriv", "at", "batch", "flock",
     }
 )
 
@@ -79,7 +85,7 @@ _PIPE_TO_SHELL = frozenset({"sh", "bash", "zsh", "dash", "tee"})
 _WRAPPER_PREFIXES = frozenset(
     {
         "env", "command", "builtin", "exec", "nice", "nohup", "timeout",
-        "stdbuf", "setsid", "xargs", "time", "ionice", "chrt",
+        "stdbuf", "setsid", "xargs", "time", "ionice", "chrt", "taskset", "numactl",
     }
 )
 
@@ -95,7 +101,39 @@ _WRAPPER_VALUE_OPTIONS = {
     "ionice": {"-c", "--class", "-n", "--classdata", "-p", "--pid"},
     "chrt": {"-p"},
     "stdbuf": {"-i", "-o", "-e"},
+    "env": {"-u", "--unset", "-C", "--chdir", "-P", "-a", "--argv0"},
+    "xargs": {"-a", "--arg-file", "-d", "--delimiter", "-E", "-I", "-L", "-n", "--max-args", "-P", "--max-procs",
+              "-s", "--max-chars", "--process-slot-var"},
+    "taskset": {"-p", "--pid"},
+    "numactl": {"-C", "--physcpubind", "-N", "--cpunodebind", "-m", "--membind", "-i", "--interleave", "-p", "--preferred"},
 }
+
+# Commands that hand their arguments to a SHELL, which parses them again: `eval 'rm -rf ~'`, `watch 'rm -rf ~'`. Their arguments
+# are classified as a command line of their own (joined, not quoted), with these own options first.
+_SHELL_REPARSE = {"eval": frozenset(), "watch": frozenset({"-n", "--interval", "-q", "--equexit"})}
+
+# Commands whose `-c STRING` (or `--command STRING`) runs STRING through a shell. su / runuser also switch user (DANGEROUS floor).
+_DASH_C_RUNNERS = frozenset({"su", "runuser", "script"})
+
+# `find` actions that delete, run programs or write files (`-fprint FILE` writes FILE).
+_FIND_ACTIONS = frozenset({"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"})
+
+# Environment variables that make an otherwise read-only command run other programs or load other code:
+# `GIT_EXTERNAL_DIFF=x git diff`, `PATH=. ls`, `LD_PRELOAD=x.so cat f`, `RIPGREP_CONFIG_PATH=f rg x` (the file can set --pre).
+_RISKY_ENV = re.compile(r"(?:PATH|LD_\w+|DYLD_\w+|BASH_ENV|ENV|IFS|SHELLOPTS|BASHOPTS|PROMPT_COMMAND|PS4|GIT_\w+|PAGER|MANPAGER|"
+                        r"LESSOPEN|LESSCLOSE|RIPGREP_CONFIG_PATH)=", re.S)
+
+# A command word bash would still EXPAND (variable, substitution, glob, brace expansion) - its real name is unknown here.
+_EXPANDING_WORD = re.compile(r"[$`*?\[]|\{[^}]*(?:,|\.\.)[^}]*\}")
+
+# Command words that, appearing as an argument of an UNKNOWN command (`busybox rm -rf ~`, `taskset 1 reboot`), are very likely its
+# payload: the rest of the line from that word on is classified as a command too (it can only make the result stricter).
+_PAYLOAD_VERBS = frozenset({"rm", "dd", "shutdown", "reboot", "poweroff", "halt", "chmod", "chown", "mv", "cp", "kill", "pkill",
+                            "killall", "systemctl", "service", "sudo", "doas", "pkexec", "sh", "bash", "zsh", "dash", "eval"})
+
+# Output-redirect targets that are not files: discarding output or writing it to the terminal never changes anything.
+_HARMLESS_TARGETS = frozenset({"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "/dev/fd/1", "/dev/fd/2"})
+_OUTPUT_OPS = frozenset({">", ">>", ">|", "&>", "&>>", "<>", ">&", "&>|"})
 
 # Splits a command line into segments run in sequence/parallel. We classify
 # each segment independently and take the highest risk. This regex is only used
@@ -123,113 +161,44 @@ def _strip_env_prefix(tokens: list[str]) -> list[str]:
 
 
 def _split_segments(command: str) -> list[str]:
-    """Split on compound separators (`;`, `&&`, `||`, `|`), grouping- and
-    quote-aware.
-
-    A separator is only a top-level separator when it sits OUTSIDE any `(...)`
-    subshell, `{...}` group, and outside single/double quotes. A separator
-    nested inside a group or quotes is part of that group/argument and is not a
-    split point. Redirect/fd-dup pipes are handled by the caller; here `|` is
-    always a separator when unquoted/ungrouped (a bare `|` is a pipe).
-    """
-    segments: list[str] = []
-    buf: list[str] = []
-    paren = 0  # depth of ( )
-    brace = 0  # depth of { }
-    quote: str | None = None
-    i = 0
-    n = len(command)
-    while i < n:
-        c = command[i]
-        if quote is not None:
-            buf.append(c)
-            if c == quote:
-                quote = None
-            i += 1
-            continue
-        if c in ("'", '"'):
-            quote = c
-            buf.append(c)
-            i += 1
-            continue
-        if c == "(":
-            paren += 1
-            buf.append(c)
-            i += 1
-            continue
-        if c == ")":
-            if paren > 0:
-                paren -= 1
-            buf.append(c)
-            i += 1
-            continue
-        if c == "{":
-            brace += 1
-            buf.append(c)
-            i += 1
-            continue
-        if c == "}":
-            if brace > 0:
-                brace -= 1
-            buf.append(c)
-            i += 1
-            continue
-        if paren == 0 and brace == 0:
-            # Two-char separators first.
-            if command.startswith("&&", i) or command.startswith("||", i):
-                segments.append("".join(buf))
-                buf = []
-                i += 2
-                continue
-            if c in ";|":
-                segments.append("".join(buf))
-                buf = []
-                i += 1
-                continue
-        buf.append(c)
-        i += 1
-    segments.append("".join(buf))
-    return [seg.strip() for seg in segments if seg.strip()]
+    """The simple commands of `command` (agent.shellparse: quote-, escape-, group-, comment- and here-document-aware; newline,
+    `&`, `|&`, `;;` are separators like `;`, `&&`, `||`, `|`). For a line the parser rejects, the crude regex split, so a
+    reason can still be found for an error message - classification itself treats such a line as DANGEROUS."""
+    segs = shellparse.split(command)
+    if segs is None:
+        return [p.strip() for p in re.split(r"&&|\|\||[;|&\n]", command) if p.strip()]
+    return [seg.text for seg in segs if seg.text]
 
 
 def _has_command_substitution(command: str) -> bool:
-    return "$(" in command or "`" in command
+    return "$(" in command or "`" in command or "<(" in command or ">(" in command
 
 
-def _iter_redirect_tokens(tokens: list[str]):
-    """Yield redirect operator/target info from tokenised output.
-
-    A redirect is a `>`/`>>` operator (possibly with a leading fd digit like
-    `2>`, or attached target like `>file`). A pure fd-dup (`2>&1`, `>&2`) is NOT
-    a file redirect. Tokens come from shlex, so a `>` inside a quoted argument
-    is already glued into its token and won't be seen here as an operator.
-    """
+def _iter_redirects(text: str):
+    """(operator, target) for every OUTPUT redirect in one simple command: `>`, `>>`, `>|`, `&>`, `&>>`, `<>` (read-write) and
+    `>&FILE`. Operator-aware (a `>` glued to a word, `echo hi>~/.bashrc`, is still a redirect; one inside quotes is not). An fd
+    duplication (`2>&1`, `>&2`, `>&-`) is not a file. The target is None when the line ends after the operator."""
+    try:
+        lex = shlex.shlex(text, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        tokens = list(lex)
+    except ValueError:
+        return
     for i, tok in enumerate(tokens):
-        m = re.fullmatch(r"(\d*)(>>?)(&?)(.*)", tok)
-        if not m:
+        if tok not in _OUTPUT_OPS:
             continue
-        _, op, amp, rest = m.groups()
-        if amp:
-            continue  # fd-dup like 2>&1 or >&2 -- not a file redirect
-        if rest:
-            yield op, rest
-        elif i + 1 < len(tokens):
-            yield op, tokens[i + 1]
-        else:
-            yield op, None
+        target = tokens[i + 1] if i + 1 < len(tokens) else None
+        if tok == ">&" and (target is None or re.fullmatch(r"\d+-?|-", target)):
+            continue                                            # fd duplication / closing, not a file
+        yield tok, target
 
 
 def _has_output_redirect(command: str) -> bool:
-    """True if the command has a real `>`/`>>` file redirect (shlex-aware).
-
-    A `>` inside a quoted argument (`echo 'a > b'`) or an fd-dup (`2>&1`) is
-    NOT a redirect. Parse errors fall back to the conservative substring check.
-    """
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        return ">" in command
-    return any(True for _ in _iter_redirect_tokens(tokens))
+    """True if the command writes a real file through a redirect (`/dev/null`, `/dev/stderr` ... are not files)."""
+    for _op, target in _iter_redirects(command):
+        if target is None or target.strip("'\"") not in _HARMLESS_TARGETS:
+            return True
+    return False
 
 
 def _exe_basename(token: str) -> str:
@@ -248,10 +217,9 @@ def _exe_basename(token: str) -> str:
     return token.lstrip("\\").rsplit("/", 1)[-1]
 
 
-def _blocked_reason(command: str, blocked_patterns: list[str]) -> str | None:
-    """Return a human reason if `command` (a single segment) is BLOCKED, else None."""
+def _raw_blocked_reason(command: str, blocked_patterns: list[str]) -> str | None:
+    """The checks that look at the raw text (they must survive any tokenisation quirk): fork bomb, config patterns, block devices."""
     stripped = command.strip()
-    lowered = stripped.lower()
     collapsed = re.sub(r"\s+", "", stripped)
 
     # Fork bomb: match the classic `:(){:|:&};:` regardless of internal spacing.
@@ -271,6 +239,15 @@ def _blocked_reason(command: str, blocked_patterns: list[str]) -> str | None:
         return "redirect to block device"
     if re.search(r"\bof=\s*/dev/(sd|nvme|hd|vd|mmcblk)", stripped):
         return "dd to block device"
+    return None
+
+
+def _blocked_reason(command: str, blocked_patterns: list[str]) -> str | None:
+    """Return a human reason if `command` (a single segment) is BLOCKED, else None."""
+    raw = _raw_blocked_reason(command, blocked_patterns)
+    if raw:
+        return raw
+    stripped = command.strip()
 
     try:
         tokens = shlex.split(stripped)
@@ -305,10 +282,12 @@ def _blocked_reason(command: str, blocked_patterns: list[str]) -> str | None:
             if arg.startswith("of=") and _is_block_device(arg[len("of=") :]):
                 return "dd to block device"
 
-    # Redirect (> / >>) whose target is a block device (spaced token form).
-    redirect_target = _redirect_target(tokens)
-    if redirect_target and _is_block_device(redirect_target):
-        return "redirect to block device"
+    # Every output redirect (`>`, `>>`, `&>`, `>|`, `<>`, `>&FILE`, glued or spaced): block devices and sensitive paths.
+    for _op, target in _iter_redirects(stripped):
+        if target and _is_block_device(target):
+            return "redirect to block device"
+        if target and _is_sensitive_redirect_target(target):
+            return f"redirect to sensitive path {target}"
 
     # rm targeting root / home / glob-root.
     if exe == "rm":
@@ -323,11 +302,6 @@ def _blocked_reason(command: str, blocked_patterns: list[str]) -> str | None:
             if _is_root_or_home_target(arg):
                 return "chmod -R on protected path"
 
-    # Redirect (> / >>) to a sensitive path (absolute outside cwd, or home
-    # dotfile). Block-device targets already handled above.
-    if redirect_target and _is_sensitive_redirect_target(redirect_target):
-        return f"redirect to sensitive path {redirect_target}"
-
     # System power state changes.
     if exe in {"shutdown", "reboot", "poweroff", "halt"}:
         return f"{exe} (power state change)"
@@ -341,11 +315,10 @@ def _is_block_device(path: str) -> bool:
 
 
 def _redirect_target(tokens: list[str]) -> str | None:
-    """Return the file target of a `>`/`>>` redirect, if any."""
-    for _op, target in _iter_redirect_tokens(tokens):
+    """The file target of the first output redirect of an already tokenised command (None: there is none)."""
+    for _op, target in _iter_redirects(" ".join(tokens)):
         if target:
-            # a glued shell operator (`2>/dev/null;`) is not part of the file name
-            return re.split(r"[;&|)]", target, maxsplit=1)[0] or target
+            return target
     return None
 
 
@@ -436,9 +409,29 @@ def _dangerous_reason(command: str) -> bool:
     exe = _exe_basename(tokens[0])
     args = tokens[1:]
 
-    # find with a destructive action is not read-only despite `find` being on
+    # find with a destructive action (or one that writes a file: -fprint FILE) is not read-only despite `find` being on
     # the safe allowlist; treat it as DANGEROUS (strictest-wins on ambiguity).
-    if exe == "find" and any(a in {"-delete", "-exec", "-execdir", "-ok", "-okdir"} for a in args):
+    if exe == "find" and any(a in _FIND_ACTIONS for a in args):
+        return True
+
+    # ripgrep's --pre runs a program on every file it searches.
+    if exe == "rg" and any(a == "--pre" or a.startswith("--pre=") for a in args):
+        return True
+
+    # `git diff/log --output=FILE` writes FILE; outside the project that is as risky as a redirect there.
+    if exe == "git":
+        for n, a in enumerate(args):
+            if a == "--output" or a.startswith("--output="):
+                target = a.split("=", 1)[1] if "=" in a else (args[n + 1] if n + 1 < len(args) else "")
+                if not target or _is_sensitive_redirect_target(target):
+                    return True
+
+    # crontab installs (or removes) scheduled commands; only listing them is harmless.
+    if exe == "crontab" and args != ["-l"]:
+        return True
+
+    # `date -s` / `date --set` changes the system clock.
+    if exe == "date" and any(a in ("-s", "--set") or a.startswith(("--set=", "-s")) for a in args):
         return True
 
     if exe in _DANGEROUS_EXECUTABLES:
@@ -537,6 +530,19 @@ def _strip_wrapper_prefix(tokens: list[str]) -> list[str] | None | object:
         opt = rest.pop(0)
         if opt == "--":
             break  # end-of-options marker; everything after is the payload
+        # `env -S STRING` / `--split-string=STRING` runs STRING split into words: STRING is the payload.
+        if exe == "env" and (opt in ("-S", "--split-string") or opt.startswith("--split-string=")
+                             or (opt.startswith("-S") and len(opt) > 2)):
+            if opt in ("-S", "--split-string"):
+                if not rest:
+                    return _WRAPPER_UNCERTAIN
+                value = rest.pop(0)
+            else:
+                value = opt.split("=", 1)[1] if opt.startswith("--") else opt[2:]
+            try:
+                return shlex.split(value) + rest
+            except ValueError:
+                return _WRAPPER_UNCERTAIN
         # Attached-value long form `--signal=KILL`: the value is glued on, so no
         # extra token to consume regardless of whether we recognize the option.
         if opt.startswith("--") and "=" in opt:
@@ -579,6 +585,9 @@ def _strip_wrapper_prefix(tokens: list[str]) -> list[str] | None | object:
     # timeout / chrt take a leading positional (DURATION / PRIORITY) that is not
     # a command. Consume one leading numeric/duration token for these.
     if exe in {"timeout", "chrt"} and rest and re.fullmatch(r"\d+[a-zA-Z]?", rest[0]):
+        rest.pop(0)
+    # taskset MASK / taskset -c CPU-LIST: the first positional is the CPU set.
+    if exe == "taskset" and rest and re.fullmatch(r"[0-9a-fA-Fx,\-]+", rest[0]):
         rest.pop(0)
     return rest
 
@@ -623,17 +632,17 @@ def _strip_priv_prefix(tokens: list[str]) -> list[str] | object | None:
 
 
 def _extract_substitutions(command: str) -> list[str]:
-    """Return the inner command strings of every `$(...)` and backtick span.
+    """Return the inner command strings of every `$(...)`, `<(...)`, `>(...)` and backtick span.
 
-    Handles nested `$(...)` by balanced-paren scanning. Backtick spans are
-    treated as flat (non-nesting, per POSIX). Used so substituted commands are
-    classified through the SAME path as the outer command.
+    Handles nested parentheses by balanced scanning. Backtick spans are treated as flat (non-nesting, per POSIX). Quotes are
+    deliberately NOT honoured (a `$(...)` inside "..." runs; one inside '...' is classified too - stricter, never looser). Used so
+    substituted commands are classified through the SAME path as the outer command.
     """
     inners: list[str] = []
     i = 0
     n = len(command)
     while i < n:
-        if command[i] == "$" and i + 1 < n and command[i + 1] == "(":
+        if command[i] in "$<>" and i + 1 < n and command[i + 1] == "(":
             depth = 1
             j = i + 2
             start = j
@@ -659,28 +668,96 @@ def _extract_substitutions(command: str) -> list[str]:
 
 
 def _strip_grouping(segment: str) -> str | None:
-    """If `segment` is a `(...)` subshell or `{ ...; }` group, return the inner
-    content to be reclassified. Returns None if not a group.
-
-    Unbalanced grouping is signalled by returning the sentinel-free path: the
-    caller checks balance separately and escalates.
-    """
-    s = segment.strip()
-    if s.startswith("(") and s.endswith(")"):
-        return s[1:-1].strip()
-    if s.startswith("{") and s.endswith("}"):
-        return s[1:-1].strip().rstrip(";").strip()
-    return None
+    """If `segment` is exactly a `(...)` subshell or a `{ ...; }` group, return the inner command list to be reclassified, else None.
+    A brace only opens a group when a blank follows it (`{rm,-rf,~}` is brace EXPANSION, not a group)."""
+    span = shellparse.group_span(segment)
+    if span is None or span[1].strip():
+        return None
+    return span[0]
 
 
 def _grouping_unbalanced(segment: str) -> bool:
-    """True if grouping parens/braces are unbalanced at the top of a segment."""
+    """True if the segment starts a `(` subshell or a `{ ` group that never closes."""
     s = segment.strip()
-    if s.startswith("(") and not s.endswith(")"):
-        return True
-    if s.startswith("{") and not s.endswith("}"):
-        return True
-    return False
+    opens = s.startswith("(") or (s.startswith("{") and len(s) > 1 and s[1] in " \t\n")
+    return opens and shellparse.group_span(s) is None
+
+
+# Reserved words that only introduce the real command (`if rm -rf ~; then`, `do reboot`, `! rm -rf /`) and words that close a
+# compound command and run nothing themselves.
+_LEADING_KEYWORDS = re.compile(r"(?:if|then|else|elif|do|while|until|!)(?=\s|$)\s*")
+_CLOSING_WORDS = frozenset({"fi", "done", "esac", "then", "else", "do"})
+_UNANALYSED_COMPOUNDS = re.compile(r"(?:case|select|coproc)(?=\s|$)")
+_FOR_HEADER = re.compile(r"for\s+[A-Za-z_]\w*(?:\s+in(?=\s|$)(.*))?$", re.S)
+_ARITH_FOR = re.compile(r"for\s*\(\(.*\)\)$", re.S)
+_FUNCTION_DEF = re.compile(r"(?:function\s+)?([A-Za-z_:][\w.:-]*)\s*\(\s*\)\s*(.*)$|function\s+([A-Za-z_:][\w.:-]*)\s+(.*)$", re.S)
+_HEAD_VARIABLE = re.compile(r'\s*"?\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))"?(?=\s|$)')
+_ASSIGN_TOKEN = re.compile(r"([A-Za-z_]\w*)=(.*)", re.S)
+_UNSAFE_VALUE = re.compile(r"[\s$`*?\[\]{}~;&|<>()'\"\\]")
+
+# Collects the BLOCKED reasons found during one classification (see `block_reason`): one code path decides AND explains.
+_REASONS: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar("safety_reasons", default=None)
+
+
+def _strip_keywords(seg: str) -> str | None:
+    """`seg` without leading reserved words (`if`, `then`, `do`, `while`, `!` ...). None for `case`/`select`/`coproc`, whose
+    bodies are not analysed here (the caller treats them as DANGEROUS)."""
+    s = seg.strip()
+    while True:
+        if _UNANALYSED_COMPOUNDS.match(s):
+            return None
+        m = _LEADING_KEYWORDS.match(s)
+        if not m or not m.group(0):
+            return s
+        s = s[m.end():].strip()
+
+
+def _function_body(seg: str) -> str | None:
+    """The body of a function definition (`name() { ...; }`, `function name { ...; }`), or None."""
+    m = _FUNCTION_DEF.match(seg.strip())
+    if not m:
+        return None
+    body = m.group(2) if m.group(1) is not None else m.group(4)
+    return (body or "").strip()
+
+
+def _resolve_head_variable(text: str, env: dict[str, str]) -> str:
+    """`x=rm; $x -rf ~`: a command word that is a variable set earlier IN THIS LINE to a plain value is replaced by that value,
+    so the real command is classified. Anything else is left alone (an unknown `$x` as command word is DANGEROUS later)."""
+    m = _HEAD_VARIABLE.match(text)
+    if not m:
+        return text
+    name = m.group(1) or m.group(2)
+    if name not in env:
+        return text
+    return shlex.quote(env[name]) + text[m.end():]
+
+
+def _remember_assignments(text: str, env: dict[str, str]) -> None:
+    """Record the plain `NAME=value` assignments of a segment that consists of nothing else (they persist for later segments)."""
+    try:
+        toks = shlex.split(text)
+    except ValueError:
+        return
+    if toks and toks[0] in ("export", "readonly", "declare", "typeset", "local"):
+        toks = [t for t in toks[1:] if not t.startswith("-")]
+    if not toks or not all(_ASSIGN_TOKEN.fullmatch(t) for t in toks):
+        return
+    for t in toks:
+        m = _ASSIGN_TOKEN.fullmatch(t)
+        if m is None:
+            continue
+        name, value = m.group(1), m.group(2)
+        if not value or _UNSAFE_VALUE.search(value):
+            env.pop(name, None)
+        else:
+            env[name] = value
+
+
+def _note_blocked(reason: str) -> None:
+    found = _REASONS.get()
+    if found is not None and reason not in found:
+        found.append(reason)
 
 
 def _classify_segment(
@@ -691,9 +768,9 @@ def _classify_segment(
 ) -> RiskLevel:
     """Classify a single (already segment-split) command.
 
-    Recurses into groups, wrapper prefixes, and command substitutions, running
-    every extracted sub-command through the SAME path. `depth` guards against
-    pathological nesting: hitting the cap is DANGEROUS.
+    Recurses into groups, function bodies, wrapper prefixes, shell re-parsers (`eval`, `watch`, `su -c` ...) and command
+    substitutions, running every extracted sub-command through the SAME path. `depth` guards against pathological nesting:
+    hitting the cap is DANGEROUS.
     """
     if depth > _MAX_DEPTH:
         return RiskLevel.DANGEROUS
@@ -703,42 +780,108 @@ def _classify_segment(
         return RiskLevel.SAFE
 
     # BLOCKED check first: raw-text + token scans (backslash/env-prefix aware).
-    if _blocked_reason(seg, blocked_patterns) is not None:
+    reason = _blocked_reason(seg, blocked_patterns)
+    if reason is not None:
+        _note_blocked(reason)
         return RiskLevel.BLOCKED
 
-    # Unbalanced grouping: cannot reason about it -> DANGEROUS.
+    # Reserved words only introduce the real command: `then rm -rf ~` is `rm -rf ~`.
+    stripped = _strip_keywords(seg)
+    if stripped is None:
+        return RiskLevel.DANGEROUS          # case / select / coproc: not analysed, fail closed
+    if stripped != seg:
+        if not stripped or stripped in _CLOSING_WORDS:
+            return RiskLevel.SAFE
+        return _classify_segment(stripped, safe_commands, blocked_patterns, depth + 1)
+    if seg in _CLOSING_WORDS:
+        return RiskLevel.SAFE
+
+    # `for NAME in WORDS`: only WORDS can do anything (substitutions), exactly like `echo WORDS`.
+    m = _FOR_HEADER.match(seg)
+    if m:
+        return _classify_segment("echo " + (m.group(1) or ""), safe_commands, blocked_patterns, depth + 1)
+    if _ARITH_FOR.match(seg):
+        return RiskLevel.CAUTION
+
+    # A function definition: its body is code (classified), and defining a function is at least CAUTION (it can shadow `ls`).
+    body = _function_body(seg)
+    if body is not None:
+        return max(RiskLevel.CAUTION, _classify(body, safe_commands, blocked_patterns, depth + 1)) if body else RiskLevel.CAUTION
+
+    # Subshell `(...)` / group `{ ...; }`, possibly followed by a redirect: reclassify the inner content (which may itself be
+    # compound) through the full recursive path, and the rest as the redirect of a harmless `echo`.
     if _grouping_unbalanced(seg):
         return RiskLevel.DANGEROUS
+    span = shellparse.group_span(seg)
+    if span is not None:
+        inner, rest = span
+        risk = _classify(inner, safe_commands, blocked_patterns, depth + 1)
+        if rest.strip():
+            risk = max(risk, _classify_segment("echo " + rest.strip(), safe_commands, blocked_patterns, depth + 1))
+        return risk
 
-    # Subshell `(...)` / group `{ ...; }`: reclassify the inner content (which
-    # may itself be compound) through the full recursive path.
-    inner_group = _strip_grouping(seg)
-    if inner_group is not None:
-        return _classify(inner_group, safe_commands, blocked_patterns, depth + 1)
-
-    # Command substitutions `$(...)` / backticks: classify each inner command
-    # and fold into the max, then continue classifying the outer command with
-    # the substitutions still present (they demote SAFE below).
+    # Command substitutions `$(...)` / `<(...)` / backticks: classify each inner command and fold into the max, then continue
+    # classifying the outer command with the substitutions still present (they demote SAFE below).
     worst = RiskLevel.SAFE
     for inner in _extract_substitutions(seg):
         worst = max(worst, _classify(inner, safe_commands, blocked_patterns, depth + 1))
 
     # A standalone substitution (`$(rm -rf /)`) has no outer executable; its
     # risk is entirely the inner command's, already folded above.
-    stripped_of_subs = re.sub(r"\$\([^)]*\)|`[^`]*`", "", seg).strip()
+    stripped_of_subs = re.sub(r"[$<>]\([^)]*\)|`[^`]*`", "", seg).strip()
     if not stripped_of_subs:
         return worst
 
-    # Wrapper / command-runner prefix (`env`, `timeout 5`, `nice`, ...): strip
-    # it and RE-CLASSIFY the remainder, taking the max. The wrapper itself is
-    # not risky; the wrapped command carries the risk.
+    # A substitution or a file redirect anywhere in the segment means it is never SAFE, whatever wrapper comes first
+    # (`env echo hi > out.txt` must not lose its redirect when the payload is re-quoted below).
+    if _has_command_substitution(seg) or _has_output_redirect(seg):
+        worst = max(worst, RiskLevel.CAUTION)
+
     try:
         tokens = shlex.split(seg)
     except ValueError:
         return RiskLevel.DANGEROUS
-    tokens = _strip_env_prefix(tokens)
+    real = _strip_env_prefix(tokens)
+    if any(_RISKY_ENV.match(t) for t in tokens[: len(tokens) - len(real)]):
+        worst = max(worst, RiskLevel.DANGEROUS)      # PATH=. ls / GIT_EXTERNAL_DIFF=x git diff / LD_PRELOAD=x cat f
+    tokens = real
     if not tokens:
-        return max(worst, RiskLevel.SAFE)
+        return worst
+
+    # A command word bash still expands (`$x`, `$(...)rm`, `/bin/r?`, `{rm,-rf,~}`, `$'\x72m'`): its real name is unknown.
+    head = tokens[0].lstrip("\\")
+    if head not in ("[", "[[") and _EXPANDING_WORD.search(head):
+        return max(worst, RiskLevel.DANGEROUS)
+    exe = _exe_basename(tokens[0])
+
+    # Shell re-parsers: `eval STRING`, `watch STRING` run their joined arguments as a command line.
+    if exe in _SHELL_REPARSE:
+        rest = tokens[1:]
+        own = _SHELL_REPARSE[exe]
+        while rest and rest[0].startswith("-"):
+            opt = rest.pop(0)
+            if opt == "--":
+                break
+            if opt in own and rest:
+                rest.pop(0)
+        risk = max(worst, RiskLevel.CAUTION)
+        if rest:
+            risk = max(risk, _classify(" ".join(rest), safe_commands, blocked_patterns, depth + 1))
+        return risk
+
+    # `su -c STRING`, `runuser -c STRING`, `script -c STRING`: STRING runs through a shell (su/runuser also switch user).
+    if exe in _DASH_C_RUNNERS:
+        risk = max(worst, RiskLevel.DANGEROUS if exe in ("su", "runuser") else RiskLevel.CAUTION)
+        for n, t in enumerate(tokens[1:], 1):
+            payload = None
+            if t in ("-c", "--command") and n + 1 < len(tokens):
+                payload = tokens[n + 1]
+            elif t.startswith("--command="):
+                payload = t.split("=", 1)[1]
+            if payload:
+                risk = max(risk, _classify(payload, safe_commands, blocked_patterns, depth + 1))
+                break
+        return risk
 
     # Privilege elevation (`sudo`/`doas`/`pkexec`): floor at DANGEROUS but also
     # block-scan the payload so a blocked verb behind sudo stays BLOCKED. sudo
@@ -766,26 +909,28 @@ def _classify_segment(
         assert isinstance(remainder, list)
         if not remainder:
             # `env` with nothing after it is just an env dump -> SAFE-ish.
-            return max(worst, RiskLevel.SAFE)
+            return worst
         inner_cmd = " ".join(shlex.quote(t) for t in remainder)
         return max(worst, _classify(inner_cmd, safe_commands, blocked_patterns, depth + 1))
 
-    # SAFE requires: allowlisted exe AND no redirect AND no substitution.
-    if worst >= RiskLevel.CAUTION or _has_command_substitution(seg) or _has_output_redirect(seg):
-        if _dangerous_reason(seg):
-            return max(worst, RiskLevel.DANGEROUS)
-        return max(worst, RiskLevel.CAUTION)
-
     if _dangerous_reason(seg):
-        return RiskLevel.DANGEROUS
+        return max(worst, RiskLevel.DANGEROUS)
 
-    exe = tokens[0].lstrip("\\")
-    if exe in safe_commands:
-        return RiskLevel.SAFE
-    if len(tokens) >= 2 and (exe, tokens[1]) in _BUILTIN_SAFE_PREFIXES:
-        return RiskLevel.SAFE
+    # SAFE requires: allowlisted exe (bare name, not path-qualified) AND no redirect AND no substitution (folded into `worst`).
+    bare = tokens[0].lstrip("\\")
+    if bare in safe_commands or (len(tokens) >= 2 and (bare, tokens[1]) in _BUILTIN_SAFE_PREFIXES):
+        return worst
 
-    return RiskLevel.CAUTION
+    # An unknown command: a known destructive command word among its arguments (`busybox rm -rf ~`, `taskset 1 reboot`,
+    # `docker exec c rm -rf /x`) is very likely its payload, so the rest of the line from there is classified too.
+    risk = max(worst, RiskLevel.CAUTION)
+    for k in range(1, len(tokens)):
+        word = _exe_basename(tokens[k])
+        if word in _PAYLOAD_VERBS or word == "mkfs" or word.startswith("mkfs."):
+            tail = " ".join(shlex.quote(t) for t in tokens[k:])
+            risk = max(risk, _classify(tail, safe_commands, blocked_patterns, depth + 1))
+            break
+    return risk
 
 
 def _classify(
@@ -800,30 +945,34 @@ def _classify(
     if not command or not command.strip():
         return RiskLevel.SAFE
 
-    # Split on compound separators FIRST (grouping- and quote-aware, so a
-    # separator inside `(...)`, `{...}`, or quotes is never split). Only then
-    # does each segment strip its own grouping and recurse. A leading group
-    # segment (`(ls)`) followed by a separator no longer forces a whole-command
-    # bailout: the later segment (which may be BLOCKED) is classified on its own.
-    segments = _split_segments(command)
-    if not segments:
-        return RiskLevel.SAFE
+    # Split into simple commands FIRST (agent.shellparse: quote/escape/group/heredoc aware; newline and `&` separate too).
+    # Only then does each segment strip its own grouping and recurse. A line the parser rejects is DANGEROUS.
+    segments = shellparse.split(command)
+    if segments is None:
+        return RiskLevel.DANGEROUS
 
     worst = RiskLevel.SAFE
+    env: dict[str, str] = {}
     for segment in segments:
-        worst = max(worst, _classify_segment(segment, safe_commands, blocked_patterns, depth + 1))
+        text = _resolve_head_variable(segment.text, env)
+        worst = max(worst, _classify_segment(text, safe_commands, blocked_patterns, depth + 1))
+        # The body of an unquoted here-document is expanded: its `$(...)` / backquotes run.
+        for doc in segment.heredocs:
+            if doc.expands:
+                for inner in _extract_substitutions(doc.body):
+                    worst = max(worst, _classify(inner, safe_commands, blocked_patterns, depth + 1))
+        _remember_assignments(segment.text, env)
     return worst
 
 
 def classify_command(command: str, config: dict[str, Any]) -> RiskLevel:
     """Classify a shell command into a RiskLevel.
 
-    Compound commands (`;`, `&&`, `||`, `|`) are split and every segment is
-    classified; the highest (strictest) risk wins. Wrapper prefixes, subshell
-    groups, and command substitutions are recursively descended so the wrapped
-    /grouped/substituted command carries its own risk (a wrapper can never let
-    a blocked exe escape). A shlex parse error on the whole command is
-    DANGEROUS. Config extends the built-in safe/blocked lists.
+    Compound commands (`;`, `&&`, `||`, `|`, `|&`, `&`, newline) are split and every segment is classified; the highest
+    (strictest) risk wins. Wrapper prefixes, subshell groups, reserved words, function bodies, shell re-parsers and command
+    substitutions are recursively descended so the wrapped/grouped/substituted command carries its own risk (a wrapper can
+    never let a blocked exe escape). A line the shell parser rejects is DANGEROUS. Config extends the built-in safe/blocked
+    lists.
     """
     safety = config.get("safety", {}) if config else {}
     blocked_patterns = list(safety.get("blocked_patterns") or [])
@@ -832,65 +981,27 @@ def classify_command(command: str, config: dict[str, Any]) -> RiskLevel:
     if not command or not command.strip():
         return RiskLevel.SAFE
 
-    # A parse failure on the whole command means we cannot reason about it.
-    try:
-        shlex.split(command)
-    except ValueError:
-        return RiskLevel.DANGEROUS
-
-    worst = _classify(command, safe_commands, blocked_patterns, 0)
-
-    # Belt-and-suspenders: block check against the whole command, so patterns
-    # spanning a redirect (`echo hi > /dev/sda`) are caught even if segment
-    # splitting rearranged them.
-    if _blocked_reason(command, blocked_patterns) is not None:
+    # Belt-and-suspenders: the raw-text checks (fork bomb, config patterns, block devices) see the WHOLE line, here-document
+    # bodies included, so nothing hides behind the way the line was split.
+    raw = _raw_blocked_reason(command, blocked_patterns)
+    if raw is not None:
+        _note_blocked(raw)
         return RiskLevel.BLOCKED
 
-    return worst
+    # A parse failure on the whole command means we cannot reason about it.
+    if shellparse.split(command) is None:
+        return RiskLevel.DANGEROUS
 
-
-def _block_reason_recursive(command: str, blocked_patterns: list[str], depth: int) -> str | None:
-    """Find the specific BLOCKED reason, descending wrappers/groups/subs so a
-    wrapped/grouped/substituted blocked command reports its real reason."""
-    if depth > _MAX_DEPTH or not command or not command.strip():
-        return None
-    cmd = command.strip()
-    inner_group = _strip_grouping(cmd)
-    if inner_group is not None:
-        return _block_reason_recursive(inner_group, blocked_patterns, depth + 1)
-    for segment in _split_segments(cmd):
-        reason = _blocked_reason(segment, blocked_patterns)
-        if reason:
-            return reason
-        for inner in _extract_substitutions(segment):
-            reason = _block_reason_recursive(inner, blocked_patterns, depth + 1)
-            if reason:
-                return reason
-        try:
-            tokens = _strip_env_prefix(shlex.split(segment))
-        except ValueError:
-            continue
-        remainder = _strip_wrapper_prefix(tokens)
-        if isinstance(remainder, list) and remainder:
-            inner_cmd = " ".join(shlex.quote(t) for t in remainder)
-            reason = _block_reason_recursive(inner_cmd, blocked_patterns, depth + 1)
-            if reason:
-                return reason
-        priv_payload = _strip_priv_prefix(tokens)
-        if isinstance(priv_payload, list) and priv_payload:
-            inner_cmd = " ".join(shlex.quote(t) for t in priv_payload)
-            reason = _block_reason_recursive(inner_cmd, blocked_patterns, depth + 1)
-            if reason:
-                return reason
-    return None
+    return _classify(command, safe_commands, blocked_patterns, 0)
 
 
 def block_reason(command: str, config: dict[str, Any]) -> str:
-    """Return the human-readable reason a command is BLOCKED (for tool result)."""
-    safety = config.get("safety", {}) if config else {}
-    blocked_patterns = list(safety.get("blocked_patterns") or [])
-    reason = _block_reason_recursive(command, blocked_patterns, 0)
-    if reason:
-        return reason
-    reason = _blocked_reason(command, blocked_patterns)
-    return reason or "blocked command"
+    """Return the human-readable reason a command is BLOCKED (for tool result): the first reason the classifier itself found,
+    so the explanation can never drift from the decision."""
+    found: list[str] = []
+    token = _REASONS.set(found)
+    try:
+        classify_command(command, config)
+    finally:
+        _REASONS.reset(token)
+    return found[0] if found else "blocked command"
