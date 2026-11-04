@@ -433,7 +433,7 @@ class CodeTools:
         if isinstance(paths, str):
             paths = [x for x in re.split(r"[,\n]", paths) if x.strip()]
         out = []
-        budget, used = 2 * self.read_max_chars, 0          # one answer of six full files was ~17k tokens in a single tool result
+        budget, used = 4 * self.read_max_chars + 1000, 0   # four files' worth; six full files were ~17k tokens in a single tool result
         for p in (paths or [])[:6]:
             name = str(p).strip()
             try:

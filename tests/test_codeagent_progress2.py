@@ -26,10 +26,10 @@ def test_a_stopped_stream_keeps_the_context_estimate(tmp_path):
 def test_read_files_is_bounded_and_never_marks_unread_files_as_read(tmp_path):
     eng, repo, _ = engine(tmp_path, FakeLLM([]))
     cap = eng.tools.read_max_chars
-    for i in range(4):
+    for i in range(6):
         (repo / f"f{i}.txt").write_text(("x" * 100 + "\n") * (cap // 101))
-    out = eng.execute("read_files", {"paths": [f"f{i}.txt" for i in range(4)]})
+    out = eng.execute("read_files", {"paths": [f"f{i}.txt" for i in range(6)]})
     assert "not read here" in out
-    skipped = [f"f{i}.txt" for i in range(4) if f"f{i}.txt: not read here" in out]
+    skipped = [f"f{i}.txt" for i in range(6) if f"f{i}.txt: not read here" in out]
     again = eng.execute("read_file", {"path": skipped[0]})
     assert "unchanged since step" not in again            # it was not shown, so it is not "already in your context"
