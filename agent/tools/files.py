@@ -10,11 +10,16 @@ prompts), so the handlers here do NOT write audit rows themselves.
 
 from __future__ import annotations
 
+import fnmatch
+import os
 import re
 import shutil
+import stat
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
+from agent import textfile
 from agent.config import DEFAULT_DATA_DIR
 from agent.tools.registry import Tool
 
@@ -24,7 +29,11 @@ SEARCH_MAX_HITS = 100
 SEARCH_MAX_FILE_BYTES = 2_000_000
 FIND_MAX_HITS = 100
 TRUNCATED_MARKER = "\n[truncated]"
-EXCLUDED_DIRS = {".git", "node_modules", ".venv", "data", "$RECYCLE.BIN", "System Volume Information"}
+EXCLUDED_DIRS = {".git", "node_modules", ".venv", "$RECYCLE.BIN", "System Volume Information"}
+# Never walked into from a search that starts above them (pseudo filesystems: endless or huge, never what the user means).
+_PSEUDO_DIRS = ("/proc", "/sys", "/dev")
+SEARCH_TIME_BUDGET_S = 20.0
+SNIPPET_CHARS = 240           # a matching line longer than this (minified JS, a data dump) is shown around the match only
 # Where external drives actually show up on this system - /media and
 # /run/media are one level deeper (<root>/<username>/<drive>), /mnt drives
 # sit directly under it. Without this, "find it on the HDD" costs the model
@@ -101,19 +110,43 @@ def read_file(path: str, max_chars: int | None = None, **_kwargs: Any) -> str:
     if p.is_dir():
         return f"Error: {p} is a directory, not a file."
     try:
-        raw = p.read_bytes()
+        st = p.stat()
     except OSError as exc:
         return f"Error reading {p}: {exc}"
-    if _is_binary(raw):
+    if not stat.S_ISREG(st.st_mode):
+        # a FIFO blocks forever, /dev/zero never ends: only regular files are read
+        return f"Error: {p} is not a regular file (a device, pipe or socket), so it is not read."
+    budget = max_chars * 4 + 4096                     # enough bytes for max_chars characters in any encoding
+    try:
+        with p.open("rb") as f:
+            raw = f.read(budget)
+    except OSError as exc:
+        return f"Error reading {p}: {exc}"
+    if _is_binary(raw[:4096]) and textfile.looks_binary(raw):
         return f"Error: {p} appears to be a binary file."
-    text = raw.decode("utf-8", errors="replace")
+    text = _decode_prefix(raw, cut=st.st_size > len(raw))
     # Head the content with the file it came from: raw text alone is
     # unattributable, so the model can't tell two files apart or notice it read
     # the wrong one — and a truncated read looks identical to a whole file.
+    if st.st_size > len(raw):                         # only the start of a big file was read: its size, not a char count
+        header = f"File {p} (first {min(max_chars, len(text))} chars; the file has {_human_size(st.st_size)}):"
+        return f"{header}\n{text[:max_chars]}{TRUNCATED_MARKER}"
     if len(text) > max_chars:
         header = f"File {p} (first {max_chars} of {len(text)} chars):"
         return f"{header}\n{text[:max_chars]}{TRUNCATED_MARKER}"
     return f"File {p} ({len(text)} chars):\n{text}"
+
+
+def _decode_prefix(raw: bytes, cut: bool) -> str:
+    """Decode without losing characters; a read that stopped mid-file may end inside a UTF-8 character, which must not make the
+    whole file look like cp1252."""
+    if cut:
+        for k in range(4):
+            try:
+                return raw[:len(raw) - k].decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+    return textfile.decode(raw)[0]
 
 
 def list_dir(path: str = ".", **_kwargs: Any) -> str:
@@ -174,11 +207,9 @@ def search_files(pattern: str, path: str = ".", glob: str = "*", **_kwargs: Any)
 
     hits: list[str] = []
     where = f"'{pattern}' under {safe_text(str(root))}" + (f" matching {glob}" if glob != "*" else "")
-    for candidate in sorted(root.rglob(glob)):
-        if not candidate.is_file():
-            continue
-        if EXCLUDED_DIRS & set(candidate.relative_to(root).parts):
-            continue
+    deadline = time.monotonic() + SEARCH_TIME_BUDGET_S
+    walked = _walk(root, deadline)
+    for candidate in (c for c in walked if _glob_match(c, root, glob)):
         try:
             if candidate.stat().st_size > SEARCH_MAX_FILE_BYTES:
                 continue
@@ -187,20 +218,85 @@ def search_files(pattern: str, path: str = ".", glob: str = "*", **_kwargs: Any)
             continue
         if _is_binary(raw):
             continue
-        text = raw.decode("utf-8", errors="replace")
+        text = textfile.decode(raw)[0]
         for lineno, line in enumerate(text.splitlines(), start=1):
             if pattern in line:
-                hits.append(f"{safe_text(str(candidate))}:{lineno}: {line.strip()}")
+                hits.append(f"{safe_text(str(candidate))}:{lineno}: {_snippet(line, pattern)}")
                 if len(hits) >= SEARCH_MAX_HITS:
                     return "\n".join(
                         [f"Searched {where} — stopped at {SEARCH_MAX_HITS} hits:", *hits]
                     )
+    stopped = f" (stopped after {SEARCH_TIME_BUDGET_S:.0f}s - narrow the path)" if time.monotonic() > deadline else ""
     # Say where we looked, especially when we found nothing: "no matches" without
     # a location invites the model to conclude the thing doesn't exist at all.
     if not hits:
-        return f"No matches for {where}."
+        return f"No matches for {where}{stopped}."
     noun = "match" if len(hits) == 1 else "matches"
-    return "\n".join([f"Searched {where} — {len(hits)} {noun}:", *hits])
+    return "\n".join([f"Searched {where} — {len(hits)} {noun}{stopped}:", *hits])
+
+
+def _snippet(line: str, pattern: str) -> str:
+    """The matching line, or - for a very long one - a window around the match."""
+    line = line.strip()
+    if len(line) <= SNIPPET_CHARS:
+        return line
+    k = max(line.find(pattern), 0)
+    a = max(0, k - SNIPPET_CHARS // 3)
+    b = min(len(line), a + SNIPPET_CHARS)
+    return ("…" if a else "") + line[a:b] + ("…" if b < len(line) else "")
+
+
+def _agent_data_dir() -> Path | None:
+    try:
+        return Path(DEFAULT_DATA_DIR).expanduser().resolve()
+    except OSError:
+        return None
+
+
+def _walk(root: Path, deadline: float, dirs_too: bool = False) -> Iterator[Path]:
+    """Files (and with `dirs_too` directories) under `root`, depth-first in name order. Never descends into EXCLUDED_DIRS, the
+    agent's own data folder, pseudo filesystems or symlinked folders, and stops at `deadline` (seconds of time.monotonic())."""
+    data = _agent_data_dir()
+    if root.is_file():
+        yield root
+        return
+    stack = [str(root)]
+    while stack:
+        if time.monotonic() > deadline:
+            return
+        here = stack.pop()
+        try:
+            with os.scandir(here) as it:
+                entries = sorted(it, key=lambda e: e.name)
+        except OSError:
+            continue
+        subdirs = []
+        for e in entries:
+            try:
+                is_dir = e.is_dir(follow_symlinks=False)
+            except OSError:
+                continue
+            if is_dir:
+                full = Path(e.path)
+                if e.name in EXCLUDED_DIRS or e.path in _PSEUDO_DIRS or (data is not None and full == data):
+                    continue
+                if dirs_too:
+                    yield full
+                subdirs.append(e.path)
+            elif e.is_file():
+                yield Path(e.path)
+        stack.extend(reversed(subdirs))
+
+
+def _glob_match(candidate: Path, root: Path, glob: str) -> bool:
+    if glob in ("", "*"):
+        return True
+    if "/" in glob:
+        try:
+            return fnmatch.fnmatch(candidate.relative_to(root).as_posix(), glob)
+        except ValueError:
+            return False
+    return fnmatch.fnmatch(candidate.name, glob)
 
 
 def disk_usage(path: str = "/", **_kwargs: Any) -> str:
@@ -287,29 +383,31 @@ def find_files(name: str = "", path: str = "/", glob: str = "*", **_kwargs: Any)
     where = f"'{name}' under {safe_text(str(root))}" if name else f"{glob} under {safe_text(str(root))}"
     seen: set[Path] = set()
     hits: list[str] = []
+    deadline = time.monotonic() + SEARCH_TIME_BUDGET_S
+    patterns = _expand_brace_glob(glob)
     try:
-        for pattern in _expand_brace_glob(glob):
-            for candidate in root.rglob(pattern):
-                if candidate in seen:
-                    continue
-                if EXCLUDED_DIRS & set(candidate.relative_to(root).parts):
-                    continue
-                if needle and needle not in candidate.name.lower():
-                    continue
-                seen.add(candidate)
-                kind = "directory" if candidate.is_dir() else "file"
-                hits.append(f"- {safe_text(str(candidate))} ({kind})")
-                if len(hits) >= FIND_MAX_HITS:
-                    return "\n".join(
-                        [f"Searching {where} — stopped at {FIND_MAX_HITS} hits:", *hits]
-                    )
+        for candidate in _walk(root, deadline, dirs_too=True):
+            if candidate in seen:
+                continue
+            if not any(_glob_match(candidate, root, pat) for pat in patterns):
+                continue
+            if needle and needle not in candidate.name.lower():
+                continue
+            seen.add(candidate)
+            kind = "directory" if candidate.is_dir() else "file"
+            hits.append(f"- {safe_text(str(candidate))} ({kind})")
+            if len(hits) >= FIND_MAX_HITS:
+                return "\n".join(
+                    [f"Searching {where} — stopped at {FIND_MAX_HITS} hits:", *hits]
+                )
     except OSError as exc:
         return f"Error searching {root}: {exc}"
 
+    stopped = f" (stopped after {SEARCH_TIME_BUDGET_S:.0f}s - narrow the path)" if time.monotonic() > deadline else ""
     if not hits:
-        return f"No matches for {where}."
+        return f"No matches for {where}{stopped}."
     noun = "match" if len(hits) == 1 else "matches"
-    return "\n".join([f"Searching {where} — {len(hits)} {noun}:", *hits])
+    return "\n".join([f"Searching {where} — {len(hits)} {noun}{stopped}:", *hits])
 
 
 def write_file(path: str, content: str, append: bool = False, **_kwargs: Any) -> str:

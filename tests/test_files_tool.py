@@ -75,18 +75,23 @@ def test_search_files_finds_substring(tmp_path: Path):
     assert "b.txt" not in out
 
 
-def test_search_files_skips_excluded_dirs(tmp_path: Path):
+def test_search_files_skips_excluded_dirs(tmp_path: Path, monkeypatch):
     excluded = tmp_path / ".git"
     excluded.mkdir()
     (excluded / "secret.txt").write_text("needle in git")
-    data = tmp_path / "data"
-    data.mkdir()
-    (data / "db.txt").write_text("needle in data")
+    agent_data = tmp_path / "agentdata"                  # the agent's OWN data folder (memory database) is never searched
+    agent_data.mkdir()
+    (agent_data / "db.txt").write_text("needle in data")
+    monkeypatch.setattr("agent.tools.files.DEFAULT_DATA_DIR", agent_data)
+    project_data = tmp_path / "data"                     # ... but a project's ordinary data/ folder is
+    project_data.mkdir()
+    (project_data / "cities.csv").write_text("needle in a project's data folder")
     (tmp_path / "keep.txt").write_text("needle in keep")
     out = search_files("needle", str(tmp_path))
     assert "keep.txt" in out
     assert ".git" not in out
     assert "db.txt" not in out
+    assert "cities.csv" in out
 
 
 def test_search_files_skips_binary_silently(tmp_path: Path):

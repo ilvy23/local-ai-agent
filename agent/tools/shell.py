@@ -12,16 +12,18 @@ static tier.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from typing import Any
 
-from agent import osport
+from agent import osport, procrun
 from agent.tools.registry import Tool
 
 DEFAULT_TIMEOUT_S = 60
 DEFAULT_MAX_TIMEOUT_S = 300
 OUTPUT_LIMIT = 10_000
 TRUNCATE_MARKER = "\n[truncated]"
+_NEEDS_TERMINAL = re.compile(r"\s*(?:sudo|doas|pkexec)(?:\s|$)")
 
 
 def run_command(
@@ -41,26 +43,34 @@ def run_command(
     argv = osport.shell_argv(command)
     if argv is None:
         return f"$ {command}\nnot run: {osport.NO_SHELL_MESSAGE}"
-    try:
-        completed = subprocess.run(
-            argv,
-            capture_output=True,
-            text=True,
-            timeout=effective_timeout,
-            cwd=cwd,
-        )
-    except subprocess.TimeoutExpired:
-        return f"$ {command}\n(in {cwd or os.getcwd()})\nTimed out after {effective_timeout}s."
+    where = cwd or os.getcwd()
+    if _NEEDS_TERMINAL.match(command):
+        # sudo / doas / pkexec may ask for a password on the terminal: run in the agent's own session, as before
+        try:
+            completed = subprocess.run(argv, capture_output=True, text=True, timeout=effective_timeout, cwd=cwd)
+        except subprocess.TimeoutExpired:
+            return f"$ {command}\n(in {where})\nTimed out after {effective_timeout}s."
+        output, code = (completed.stdout or "") + (completed.stderr or ""), completed.returncode
+    else:
+        # own process group + output in a temp file: a timeout kills the children too, and a background child that keeps the
+        # output open can no longer make this call wait until the timeout
+        res = procrun.run(argv, timeout=effective_timeout, cwd=cwd)
+        if res.timed_out:
+            tail = procrun.cap(res.output.rstrip(), 1500, 3500)
+            return f"$ {command}\n(in {where})\nTimed out after {effective_timeout}s (stopped, with everything it started)." + \
+                (f"\nOutput so far:\n{tail}" if tail else "")
+        output, code = res.output, res.code
 
-    output = (completed.stdout or "") + (completed.stderr or "")
+    # Long output keeps its head AND its tail - test runners and builds print the summary (and the error) last.
     if len(output) > OUTPUT_LIMIT:
-        output = output[:OUTPUT_LIMIT] + TRUNCATE_MARKER
+        head, tail = OUTPUT_LIMIT // 4, OUTPUT_LIMIT - OUTPUT_LIMIT // 4 - 80
+        output = f"{output[:head]}{TRUNCATE_MARKER} ({len(output) - head - tail} characters cut; the end follows)\n{output[-tail:]}"
 
     # Echo the command and the directory it ran in. Bare output is
     # unattributable — across several calls the model can't tell which result
     # belongs to which command, and the cwd (wherever the CLI was launched) is
     # otherwise invisible to it.
-    head = f"$ {command}\n(in {cwd or os.getcwd()}, exit code {completed.returncode})"
+    head = f"$ {command}\n(in {where}, exit code {code})"
     return f"{head}\n{output}".rstrip()
 
 
