@@ -363,18 +363,11 @@ def _handle_model_switch(client: Any, config: dict[str, Any], console: Console, 
         console.print("[yellow]That's not one of the models I found. Staying on the current one.[/yellow]")
         return current
 
-    from agent.settings import set_value
+    from agent import settings
 
-    try:
-        set_value("chat_model", selected)
-    except ValueError as exc:
-        console.print(f"[yellow]Switched for now, but couldn't save it as the default: {exc}[/yellow]")
-
-    from agent import modelpick
-    from agent.config import DEFAULT_CONFIG_PATH
-
-    modelpick.follow_chat(config, current, selected, DEFAULT_CONFIG_PATH)
-    config["models"]["chat"] = selected
+    _followed, error = settings.switch_chat_model(config, selected)
+    if error:
+        console.print(f"[yellow]Switched for now, but couldn't save it as the default: {error}[/yellow]")
     console.print(f"[green]Switched to {selected}.[/green] I'll use it from now on, including in new chats.")
     _warn_if_model_cannot_use_tools(console, client, selected)
     return selected

@@ -348,17 +348,51 @@ def set_value(name: str, value: Any) -> tuple[str, Any]:
         if error:
             raise ValueError(f"invalid value for '{name}': {error}")
     dotted = meta["path"]
-    path = Path(DEFAULT_CONFIG_PATH)
-    data = yaml.safe_load(path.read_text()) if path.exists() else {}
-    node = data
-    parts = dotted.split(".")
-    for part in parts[:-1]:
-        node = node.setdefault(part, {})
-    node[parts[-1]] = coerced
+    values = {dotted: coerced}
     if name == "coding_model":      # models.coding overrides coding.executor.model (agent/coding/config.py): keep both in step, otherwise
-        data.setdefault("models", {})["coding"] = coerced      # the edit is silently ignored and the OLD model keeps being used
-    path.write_text(yaml.safe_dump(data, sort_keys=True))
+        values["models.coding"] = coerced      # the edit is silently ignored and the OLD model keeps being used
+    _write_paths(values)
     return dotted, coerced
+
+
+def _write_paths(values: dict[str, Any]) -> None:
+    """Write several dotted keys into the user's config.yaml in ONE read-modify-write (never the merged config)."""
+    path = Path(DEFAULT_CONFIG_PATH)
+    data = (yaml.safe_load(path.read_text()) if path.exists() else None) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} is not a YAML mapping; fix or delete it first")
+    for dotted, value in values.items():
+        node = data
+        parts = dotted.split(".")
+        for part in parts[:-1]:
+            child = node.get(part)
+            if not isinstance(child, dict):
+                child = node[part] = {}
+            node = child
+        node[parts[-1]] = value
+    path.write_text(yaml.safe_dump(data, sort_keys=True))
+
+
+def switch_chat_model(config: dict[str, Any], new: str) -> tuple[dict[str, str], str | None]:
+    """`/model` (terminal, new UI and web): use `new` as the chat model from the next turn on and save it as the default,
+    together with every chat role that followed the old chat model (agent.modelpick.follow_chat) - one write of config.yaml.
+
+    `config` is changed in place, so the running session switches even when saving fails.
+    Returns ({role: model} of the roles that followed, None) or (..., why saving failed)."""
+    from agent import modelpick
+
+    models = config.setdefault("models", {})
+    old = str(models.get("chat") or "")
+    changed = modelpick.follow_chat(config, old, new)
+    models["chat"] = new
+    coerced, error = validate("chat_model", new)
+    if error:
+        return changed, f"invalid value for 'chat_model': {error}"
+    try:
+        _write_paths({"models.chat": coerced, **{f"models.{role}": model for role, model in changed.items()}})
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        return changed, str(exc)
+    return changed, None
 
 
 # Shared neon palette (agent/theme.py is dependency-free, so `agent settings` stays usable on its own).

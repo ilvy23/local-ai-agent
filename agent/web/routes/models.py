@@ -34,18 +34,10 @@ def select_model(
     if body.model not in available:
         raise HTTPException(400, f"'{body.model}' isn't an installed model.")
 
-    from agent.settings import set_value
+    from agent import settings
 
     previous_model = config["models"]["chat"]
-    try:
-        set_value("chat_model", body.model)
-    except ValueError:
-        pass  # switched for this process even if persisting the default failed
-    from agent import modelpick
-    from agent.config import DEFAULT_CONFIG_PATH
-
-    modelpick.follow_chat(config, previous_model, body.model, DEFAULT_CONFIG_PATH)
-    config["models"]["chat"] = body.model
+    settings.switch_chat_model(config, body.model)  # switched for this process even if persisting the default failed
 
     # Switch the actual VRAM occupant right now, not lazily on the next
     # message - picking a smaller model specifically to free up room (e.g.

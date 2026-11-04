@@ -20,6 +20,7 @@ def _clean(tmp_path, monkeypatch):
     saved = {}
     import agent.settings as settings
     monkeypatch.setattr(settings, "set_value", lambda k, v: saved.__setitem__(k, v))
+    monkeypatch.setattr(settings, "_write_paths", lambda values: saved.update(values))     # /model writes through this, in one go
     yield saved
 
 
@@ -64,7 +65,7 @@ def test_model_lists_then_switches_and_persists(tmp_path, _clean):
     assert "1. m:1  (current)" in out and "2. m:2" in out
     app.handle_line("/model 2")
     assert state.config["models"]["chat"] == "m:2" and state.model == "m:2"
-    assert _clean == {"chat_model": "m:2"}
+    assert _clean["models.chat"] == "m:2" and "chat_model" not in _clean      # one write, chat + the roles that followed it
     assert "Switched to m:2" in buf.getvalue()
     app.handle_line("/model nonsense")
     assert state.model == "m:2" and "not one of the installed models" in buf.getvalue()

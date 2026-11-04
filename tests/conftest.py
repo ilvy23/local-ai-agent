@@ -1,8 +1,64 @@
 from __future__ import annotations
 
+import hashlib
 import sys
+from pathlib import Path
 
 import pytest
+
+_REAL_CONFIG = pytest.StashKey[tuple]()
+
+
+def _digest(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def pytest_sessionstart(session):
+    """Remember the developer's real config.yaml, so a test that writes it fails the run (see pytest_sessionfinish)."""
+    from agent import config as cfgmod
+
+    path = Path(cfgmod.DEFAULT_CONFIG_PATH)
+    session.config.stash[_REAL_CONFIG] = (path, _digest(path))
+
+
+def pytest_sessionfinish(session, exitstatus):
+    try:
+        path, before = session.config.stash[_REAL_CONFIG]
+    except KeyError:
+        return
+    if _digest(path) != before:
+        reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+        if reporter is not None:
+            reporter.write_line(f"a test changed the real {path} - tests must never write the user's config", red=True)
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+@pytest.fixture(autouse=True)
+def _isolated_config_file(monkeypatch, tmp_path_factory):
+    """Every config writer (settings, /model, modelpick, the web routes, coding/models, WhatsApp toggles) targets a
+    throw-away config.yaml: the module constant `DEFAULT_CONFIG_PATH` is redirected in agent.config and in every loaded
+    agent module holding its own copy of it, and `config.LAST_LOAD` starts fresh. A test that wants a particular file
+    still patches the path itself, as before."""
+    from agent import config as cfgmod
+
+    real = cfgmod.DEFAULT_CONFIG_PATH
+    fake = tmp_path_factory.mktemp("nightage-cfg") / "config.yaml"      # its own folder: tests that list tmp_path must not see it
+    for name, mod in list(sys.modules.items()):
+        if mod is None or not (name == "agent" or name.startswith("agent.")):
+            continue
+        try:
+            current = getattr(mod, "DEFAULT_CONFIG_PATH", None)
+            # the real path, or an earlier test's redirect that a module imported DURING that test copied for good
+            same = current == real or (isinstance(current, Path) and current.parent.name.startswith("nightage-cfg"))
+        except Exception:  # noqa: BLE001 - an odd module attribute must not break every test
+            same = False
+        if same:
+            monkeypatch.setattr(mod, "DEFAULT_CONFIG_PATH", fake)
+    monkeypatch.setattr(cfgmod, "LAST_LOAD", {"path": "", "user_models": [], "profile": "default", "existed": False})
+    yield fake
 
 
 def pytest_collection_modifyitems(config, items):

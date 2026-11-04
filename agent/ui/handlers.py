@@ -158,17 +158,11 @@ class ChatController:
         else:
             return f"{choice!r} is not one of the installed models. Staying on {current}. (/model lists them)"
         out: list[str] = []
-        from agent.settings import set_value
+        from agent import settings
 
-        try:
-            set_value("chat_model", selected)
-        except Exception as exc:  # noqa: BLE001
-            out.append(f"Switched for now, but couldn't save it as the default: {exc}")
-        from agent import modelpick
-        from agent.config import DEFAULT_CONFIG_PATH
-
-        modelpick.follow_chat(s.config, current, selected, DEFAULT_CONFIG_PATH)
-        s.config["models"]["chat"] = selected
+        _followed, error = settings.switch_chat_model(s.config, selected)
+        if error:
+            out.append(f"Switched for now, but couldn't save it as the default: {error}")
         s.model = selected
         out.append(f"Switched to {selected}. It is used from the next turn on, including in new chats.")
         buf = io.StringIO()

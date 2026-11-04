@@ -445,7 +445,7 @@ def test_follow_chat_moves_the_other_roles_and_keeps_deliberate_ones(tmp_path, m
 
     monkeypatch.setitem(cfgmod.LAST_LOAD, "user_models", ["coding"])
     cfg = {"models": {"chat": "a", "background": "a", "reasoning": "x", "coding": "coder", "unrestricted": ""}}
-    changed = modelpick.follow_chat(cfg, "a", "b", tmp_path / "c.yaml")
+    changed = modelpick.follow_chat(cfg, "a", "b")
     assert changed == {"background": "b", "reasoning": "b"} and cfg["models"]["coding"] == "coder"
 
 

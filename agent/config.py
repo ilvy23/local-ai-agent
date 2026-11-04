@@ -204,15 +204,20 @@ def last_load() -> dict[str, Any]:
 
 
 def load_config(
-    config_path: Path = DEFAULT_CONFIG_PATH,
-    data_dir: Path = DEFAULT_DATA_DIR,
+    config_path: Path | None = None,
+    data_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Load config from `config_path`, creating it with defaults if missing.
 
     Also ensures `data_dir` exists. Values from `config_path` are deep-merged
     over `DEFAULT_CONFIG` so newly-added default keys are always present, even
     in an older config file. Always returns a fresh dict.
+
+    The defaults (`DEFAULT_CONFIG_PATH` / `DEFAULT_DATA_DIR`) are looked up when the function is CALLED, not when it was
+    defined, so redirecting the module constant (the test suite does, for every test) really redirects every load.
     """
+    config_path = Path(config_path) if config_path is not None else DEFAULT_CONFIG_PATH
+    data_dir = Path(data_dir) if data_dir is not None else DEFAULT_DATA_DIR
     data_dir.mkdir(parents=True, exist_ok=True)
     LAST_LOAD.update(path=str(config_path), existed=config_path.exists(), user_models=[])
 
