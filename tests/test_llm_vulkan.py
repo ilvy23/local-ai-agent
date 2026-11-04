@@ -454,3 +454,23 @@ def test_cap_ctx_honours_the_users_context_choice(monkeypatch):
 
     monkeypatch.setitem(gpumode._state, "ctx", 131072)
     assert llm.cap_ctx("gpt-oss:20b", 131072) == 131072
+
+
+def test_dual_mode_never_routes_an_embedding_model_to_the_vulkan_server(monkeypatch):
+    from agent import gpumode, llm
+
+    monkeypatch.setitem(gpumode._state, "mode", gpumode.DUAL)
+    monkeypatch.setattr(llm, "is_remote", lambda *a, **k: False)
+    assert llm.wants_vulkan("gpt-oss:20b") and not llm.wants_vulkan("bge-m3")
+
+
+def test_check_model_loaded_tells_sizes_of_one_family_apart():
+    from unittest.mock import MagicMock
+
+    from agent import llm
+
+    client = llm.OllamaClient.__new__(llm.OllamaClient)
+    server = MagicMock()
+    server.get.return_value.json.return_value = {"models": [{"name": "gpt-oss:120b"}]}
+    client._servers = lambda: [server]
+    assert not client.check_model_loaded("gpt-oss:20b") and client.check_model_loaded("gpt-oss:120b")

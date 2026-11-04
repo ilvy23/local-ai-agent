@@ -200,7 +200,8 @@ def wants_vulkan(model: str) -> bool:
         return False
     mode = gpumode.current_mode()
     if mode == gpumode.DUAL:
-        return bool(model)
+        # every GENERATING model; an embedding model lives on the default server (num_gpu 0) and must be unloaded/asked there
+        return bool(model) and re.search(_VULKAN_DEFAULT_MODELS, model, re.IGNORECASE) is not None
     if mode == gpumode.SINGLE:
         return False
     return uses_vulkan(model)
@@ -1186,14 +1187,20 @@ class OllamaClient:
         Returns False on any connection error so callers can treat a
         missing Ollama server as "not loaded" without a crash.
         """
-        base = model_name.split(":")[0]
+        def same(name: str) -> bool:
+            # a running "x:latest" (or bare "x") may be any size, so it matches "x:<tag>"; two EXPLICIT tags must be equal
+            # ("gpt-oss:20b" is not "gpt-oss:120b")
+            if name == model_name:
+                return True
+            (b1, _, t1), (b2, _, t2) = name.partition(":"), model_name.partition(":")
+            return b1 == b2 and (t1 in ("", "latest") or t2 in ("", "latest"))
+
         for server in self._servers():
             try:
                 response = server.get("/api/ps")
                 response.raise_for_status()
                 for m in response.json().get("models", []):
-                    name = m.get("name", "")
-                    if name == model_name or name.split(":")[0] == base:
+                    if same(m.get("name", "")):
                         return True
             except (httpx.HTTPError, ValueError, KeyError, TypeError):
                 continue
