@@ -157,7 +157,14 @@ class CodeEngine:
         self.interactive = interactive
         self.pol = policy_mod.for_repo(self.root)
         self.model = self.pol.model or (config.get("code") or {}).get("model") or config["models"]["chat"]
-        raw_ctx = self.pol.ctx or int((config.get("models") or {}).get("chat_num_ctx", 16384))
+        if self.pol.ctx:
+            raw_ctx = int(self.pol.ctx)
+        else:
+            from agent.chat.helpers import _num_ctx
+
+            # the window the chat uses for this model (start-up choice, ceiling, overrides, model maximum): chat <-> code no
+            # longer reloads the model, and a 32k model is not sent a 95k window
+            raw_ctx = int(_num_ctx(config, self.model) or (config.get("models") or {}).get("chat_num_ctx", 16384))
         self.num_ctx = raw_ctx
         self.events = events or EventLog(session=f"{self.root.name}-{int(time.time())}")
         prof = profile_mod.detect(self.root, self.pol.test_cmd)

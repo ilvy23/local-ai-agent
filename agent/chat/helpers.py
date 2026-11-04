@@ -46,7 +46,11 @@ def _num_ctx(config: dict[str, Any], model: str | None = None) -> int:
 
     from agent.llm import cap_ctx
 
-    return cap_ctx(model, gpumode.effective_ctx(model, config.get("models", {}).get("chat_num_ctx", CHAT_NUM_CTX)))
+    from agent.llm import known_native_ctx
+
+    ctx = cap_ctx(model, gpumode.effective_ctx(model, config.get("models", {}).get("chat_num_ctx", CHAT_NUM_CTX)), config or None)
+    native = known_native_ctx(model) if model else None
+    return min(ctx, native) if ctx and native else ctx            # never more than the model was trained for
 
 
 def _mood(event: str) -> str:

@@ -201,10 +201,18 @@ def leak_check(original: str, result: str) -> list[str]:
     return out
 
 
+def _window(model: str) -> int:
+    """The window the model already runs with in this session (a fixed 8192 made the server reload the chat model for every
+    prompt-lab request, and the next chat turn reload it again)."""
+    from agent import llm as _llm
+
+    return _llm.session_ctx(model, 8192)
+
+
 def _one_shot(llm, cfg, prompt: str, temperature: float = 0.3) -> str:
     model = cfg["models"]["chat"]
     out = "".join(llm.chat([{"role": "user", "content": prompt}],
-                           model=model, num_ctx=8192, temperature=temperature)).strip()
+                           model=model, num_ctx=_window(model), temperature=temperature)).strip()
     # Models sometimes echo a label ("Request:", "Improved:") — strip a leading one.
     for lbl in _LEADING_LABELS:
         if out.lower().startswith(lbl):
@@ -441,7 +449,7 @@ def _chat_loop(console, llm, cfg, mode: str, messages: list[dict], sid: int | No
             break
         messages.append({"role": "user", "content": user})
         console.print(f"[{_DIM}]✦ …[/]")
-        reply = "".join(llm.chat(messages, model=model, num_ctx=8192, temperature=0.4)).strip()
+        reply = "".join(llm.chat(messages, model=model, num_ctx=_window(model), temperature=0.4)).strip()
         messages.append({"role": "assistant", "content": reply})
         _box(console, "assistant", reply)
         sid = _save_session(mode, messages, sid)  # autosave every turn
@@ -498,7 +506,7 @@ def studio(text: str | None = None) -> None:
                     {"role": "user", "content": text}]
         console.print(f"[{_DIM}]✦ …[/]")
         reply = "".join(llm.chat(messages, model=cfg["models"]["chat"],
-                                 num_ctx=8192, temperature=0.4)).strip()
+                                 num_ctx=_window(cfg["models"]["chat"]), temperature=0.4)).strip()
         messages.append({"role": "assistant", "content": reply})
         _box(console, "assistant", reply)
         _chat_loop(console, llm, cfg, mode, messages)

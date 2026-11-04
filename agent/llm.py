@@ -100,14 +100,27 @@ def is_remote(url: str | None = None) -> bool:
 
 
 def configure(config: dict | None) -> None:
-    """Apply the `ollama:` block of a loaded config: `host` (remote gateway) and `keep_alive`. Cheap; called by load_config."""
-    global _CONFIG_HOST, KEEP_ALIVE
+    """Apply the `ollama:` block of a loaded config (`host`, `keep_alive`) and the model settings every request needs
+    (`models.overrides.<m>.num_ctx`, `models.max_ctx_ceiling`, `models.reasoning_effort`). Cheap; called by load_config."""
+    global _CONFIG_HOST, KEEP_ALIVE, _REASONING_EFFORT
     block = (config or {}).get("ollama") if isinstance(config, dict) else None
     block = block if isinstance(block, dict) else {}
     _CONFIG_HOST = str(block.get("host") or "").strip()
     ka = str(block.get("keep_alive") or "").strip()
     if ka:
         KEEP_ALIVE = ka
+    models = (config or {}).get("models") if isinstance(config, dict) else None
+    models = models if isinstance(models, dict) else {}
+    _CTX_CONFIG.clear()
+    _CTX_CONFIG["models"] = {k: models[k] for k in ("overrides", "max_ctx_ceiling") if k in models}
+    effort = str(models.get("reasoning_effort") or "").strip().lower()
+    _REASONING_EFFORT = effort if effort in ("low", "medium", "high") else "medium"
+
+
+# What cap_ctx needs from the config when a caller has none at hand (the tool loop, background calls): the per-model
+# `num_ctx` override and the ceiling. Without it those settings never applied to the chat at all.
+_CTX_CONFIG: dict[str, Any] = {}
+_REASONING_EFFORT = "medium"     # gpt-oss style models: the chat's and coding agent's effort (models.reasoning_effort)
 
 # --- Big models on the Vulkan Ollama (spans BOTH GPUs) ----------------------
 # A 27B model does not fit one card. A second Ollama server built on the Vulkan
@@ -207,15 +220,35 @@ def wants_vulkan(model: str) -> bool:
     return uses_vulkan(model)
 
 
+_VULKAN_RETRY_S = 30.0                       # a failed check of the Vulkan server is not repeated before this
+_VULKAN_STATE: dict[str, Any] = {"down_since": None, "unit": None}
+
+
+def _note_vulkan_down() -> None:
+    if _VULKAN_STATE["down_since"] is None:
+        _VULKAN_STATE["down_since"] = time.monotonic()
+
+
+def vulkan_down() -> bool:
+    """True while the Vulkan server is known not to answer (requests then use the default server: the footer says so)."""
+    return _VULKAN_STATE["down_since"] is not None
+
+
 def _vulkan_unit_exists() -> bool:
-    """True when a persistent user unit ollama-vk.service is installed (then `systemctl --user start` is the way to bring it up)."""
+    """True when a persistent user unit ollama-vk.service is installed (then `systemctl --user start` is the way to bring it up).
+    Remembered for a minute: `systemctl --user cat` used to run (up to 5 s) on every request while the server was down."""
+    hit = _VULKAN_STATE.get("unit")
+    if hit is not None and time.monotonic() - hit[0] < 60:
+        return hit[1]
     systemctl = shutil.which("systemctl")
-    if not systemctl:
-        return False
-    try:
-        return subprocess.run([systemctl, "--user", "cat", "ollama-vk.service"], capture_output=True, timeout=5, check=False).returncode == 0
-    except (OSError, subprocess.SubprocessError):
-        return False
+    found = False
+    if systemctl:
+        try:
+            found = subprocess.run([systemctl, "--user", "cat", "ollama-vk.service"], capture_output=True, timeout=5, check=False).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            found = False
+    _VULKAN_STATE["unit"] = (time.monotonic(), found)
+    return found
 
 
 def _vulkan_start_command() -> list[str] | None:
@@ -294,6 +327,8 @@ def cap_ctx(model: str | None, num_ctx: int | None, config: dict | None = None,
         return num_ctx
     from . import ctxbudget, gpumode
 
+    config = config if config is not None else (_CTX_CONFIG or None)
+
     # The context the user picked in the start-up question (already estimated against the free VRAM and the model's own maximum
     # there) is honoured: the generic ceiling (default 95000) must not silently cut "131072" back to 95000.
     chosen = gpumode.chat_ctx_override()
@@ -357,6 +392,35 @@ def reset_protection() -> None:
     with _protect_lock:
         _protected.clear()
         _last_payload.clear()
+
+
+_NATIVE_CTX: dict[str, int] = {}
+
+
+def note_native_ctx(model: str, ctx_max: int | None) -> None:
+    """Remember the context length `model` was trained for (from /api/show), so a configured window above it is cut to it."""
+    if model and ctx_max and int(ctx_max) > 0:
+        _NATIVE_CTX[model] = int(ctx_max)
+
+
+def known_native_ctx(model: str) -> int | None:
+    return _NATIVE_CTX.get(model)
+
+
+def fit_output(cap: int | None, num_ctx: int | None, messages: list[dict[str, Any]]) -> int | None:
+    """The output cap, but never more than the room the prompt leaves in the window (~3.2 characters per token): a 25 % cap on
+    top of a nearly full window made the server cut the PROMPT instead."""
+    if not cap or not num_ctx:
+        return cap
+    used = sum(len(str(m.get("content") or "")) for m in messages) / 3.2
+    room = int(num_ctx - used - 256)
+    return max(256, min(cap, room)) if room < cap else cap
+
+
+def session_ctx(model: str, fallback: int) -> int:
+    """The window `model` already runs with in this session (protected / last used), else `fallback`: a side request with another
+    num_ctx would make the server reload the model."""
+    return int(_protected.get(model) or _last_num_ctx.get(model) or fallback)
 
 
 def protect_roles(config: dict | None) -> None:
@@ -525,6 +589,27 @@ def _note_embedding_down(model: str) -> None:
 
 class GenerationAborted(Exception):
     """Raised by a streaming callback to stop the generation (the message is the reason)."""
+
+
+class OllamaStreamError(httpx.HTTPStatusError):
+    """The server reported an error in the middle of a streamed answer (after its 200 header): `detail` is its own text, e.g. an
+    out-of-memory while loading. Shown as that text - not as "Ollama refused the request (200)". Still an HTTPStatusError, so
+    every handler that tells model errors from connection errors keeps working."""
+
+    def __init__(self, detail: str, model: str = "", *, response: httpx.Response | None = None) -> None:
+        if response is None:
+            response = httpx.Response(200, request=httpx.Request("POST", "http://ollama/api/chat"))
+        super().__init__(f"model error: {detail}", request=response.request, response=response)
+        self.detail, self.model = str(detail), model
+
+
+class VulkanServerDown(httpx.ConnectError):
+    """The dual-GPU (Vulkan) Ollama answered before and now does not: the message names THAT server and how to restart it, not
+    the default one. A ConnectError, so every existing "could not reach Ollama" handler still catches it."""
+
+    def __init__(self, url: str) -> None:
+        super().__init__(f"the Vulkan Ollama at {url} stopped answering")
+        self.url = url
 
 
 def _is_tools_unsupported_error(response: httpx.Response) -> bool:
@@ -730,15 +815,22 @@ class OllamaClient:
         can't be reached and there is no way to start it."""
         if self._vulkan_ok:
             return True
+        failed = getattr(self, "_vulkan_failed_at", None)
+        if failed is not None and time.monotonic() - failed < _VULKAN_RETRY_S:
+            return False                  # checked moments ago: not a 2 s probe + a `systemctl` call before EVERY request
         vk = self._vulkan()
         if self._reachable(vk):
             self._vulkan_ok = True
+            self._vulkan_failed_at = None
+            _VULKAN_STATE["down_since"] = None
             return True
         cmd = _vulkan_start_command()
         if cmd is None:
             log.warning("Vulkan Ollama not reachable at %s and no start command found "
                         "(set AGENT_VULKAN_START_CMD); using the default server", vulkan_base_url())
-            return False  # not cached: a later call may succeed once it is started
+            self._vulkan_failed_at = time.monotonic()
+            _note_vulkan_down()
+            return False  # remembered for _VULKAN_RETRY_S: a later call may succeed once it is started
         log.info("starting the Vulkan Ollama (both GPUs): %s", " ".join(cmd))
         try:
             subprocess.run(cmd, capture_output=True, timeout=_VULKAN_START_TIMEOUT_S, check=False)
@@ -747,8 +839,12 @@ class OllamaClient:
             return False
         if self._reachable(vk, wait_s=_VULKAN_START_TIMEOUT_S):
             self._vulkan_ok = True
+            self._vulkan_failed_at = None
+            _VULKAN_STATE["down_since"] = None
             return True
         log.warning("Vulkan Ollama did not come up at %s; using the default server", vulkan_base_url())
+        self._vulkan_failed_at = time.monotonic()
+        _note_vulkan_down()
         return False
 
     @staticmethod
@@ -845,6 +941,22 @@ class OllamaClient:
             for name in self._resident_in_vram(vk):
                 self._unload_on(vk, name)
         return self._client
+
+    @contextlib.contextmanager
+    def _open_stream(self, model: str, payload: dict[str, Any]):
+        """POST /api/chat streamed. If the Vulkan server answered before and the connection now fails, it is marked unknown again
+        (the next request re-checks it and starts it if it can) and the error names that server (VulkanServerDown)."""
+        client = self._client_for(model)
+        vk = getattr(self, "_vk_client", None) is not None and client is self._vk_client
+        try:
+            with client.stream("POST", "/api/chat", json=payload) as response:
+                yield response
+        except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
+            if vk and not isinstance(exc, VulkanServerDown):
+                self._vulkan_ok = None
+                _note_vulkan_down()
+                raise VulkanServerDown(vulkan_base_url()) from exc
+            raise
 
     def _servers(self) -> list[httpx.Client]:
         """Every server worth asking about resident models: the default one, plus
@@ -1127,7 +1239,9 @@ class OllamaClient:
         if options:
             payload["options"] = options
 
-        with self._client_for(model).stream("POST", "/api/chat", json=payload) as response:
+        with self._open_stream(model, payload) as response:
+            if getattr(response, "status_code", 200) >= 400:
+                response.read()                                   # the server's own error text, for the message
             response.raise_for_status()
             watch = _start_cancel_watch(response, cancel)        # `cancel` set: the connection is closed, the server stops
             try:
@@ -1160,6 +1274,8 @@ class OllamaClient:
             if not line:
                 continue
             chunk = json.loads(line)
+            if chunk.get("error"):                        # the server failed after its 200 header: say what it said
+                raise OllamaStreamError(chunk["error"], response=response)
             content = chunk.get("message", {}).get("content", "")
             if content:
                 yield content
@@ -1260,11 +1376,14 @@ class OllamaClient:
         }
         if tools is not None:
             payload["tools"] = tools
-        if think is not None and (think or supports_think_off(model)):
+        if uses_effort_levels(model):
+            if _REASONING_EFFORT != "medium":
+                payload["think"] = _REASONING_EFFORT           # models.reasoning_effort (medium = the model's own default)
+        elif think is not None and (think or supports_think_off(model)):
             payload["think"] = think
         options: dict[str, Any] = dict(speculative_options(model))
         num_ctx = cap_ctx(model, num_ctx)
-        cap = output_token_cap(num_ctx)
+        cap = fit_output(output_token_cap(num_ctx), num_ctx, messages)
         if cap:
             options["num_predict"] = cap
         _remember_ctx(model, num_ctx)
@@ -1279,7 +1398,7 @@ class OllamaClient:
         tool_calls: list[dict[str, Any]] = []
         final: dict[str, Any] = {}
         aborted = ""
-        with self._client_for(model).stream("POST", "/api/chat", json=payload) as response:
+        with self._open_stream(model, payload) as response:
             if response.status_code >= 400:
                 response.read()
             response.raise_for_status()
@@ -1301,7 +1420,7 @@ class OllamaClient:
                         continue
                     chunk = json.loads(line)
                     if chunk.get("error"):                # a failure after the 200 header arrives as an error line
-                        raise httpx.HTTPStatusError(f"model error: {chunk['error']}", request=response.request, response=response)
+                        raise OllamaStreamError(chunk["error"], model, response=response)
                     message = chunk.get("message") or {}
                     if on_thinking and message.get("thinking"):
                         on_thinking(message["thinking"])
@@ -1350,7 +1469,10 @@ class OllamaClient:
         payload: dict[str, Any] = {"model": model, "messages": send_messages, "stream": False, "keep_alive": KEEP_ALIVE}
         if tools is not None:
             payload["tools"] = tools
-        if think is not None and (think or supports_think_off(model)):
+        if uses_effort_levels(model):
+            if _REASONING_EFFORT != "medium":
+                payload["think"] = _REASONING_EFFORT           # models.reasoning_effort (medium = the model's own default)
+        elif think is not None and (think or supports_think_off(model)):
             payload["think"] = think                  # tool steps run with think=False: no hidden reasoning pass
         # Caught live: a reasoning model (Qwen3) can fall into an unbounded
         # hidden "thinking" pass with no natural stop, and since this call
@@ -1363,7 +1485,7 @@ class OllamaClient:
         # normal reply should never need this much of anyway.
         options: dict[str, Any] = dict(speculative_options(model))
         num_ctx = cap_ctx(model, num_ctx)
-        cap = output_token_cap(num_ctx)
+        cap = fit_output(output_token_cap(num_ctx), num_ctx, messages)
         if cap:
             options["num_predict"] = cap
         _remember_ctx(model, num_ctx)

@@ -40,6 +40,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "embed": "bge-m3",           # embeddings (multilingual, 1024-dim)
         "unrestricted": "qwen2.5:7b",  # model for the optional deep WhatsApp analysis (set your own in config.yaml)
         "weekly": "",  # empty = fall back to `background` for the weekly recap
+        "reasoning_effort": "medium",  # gpt-oss: low | medium | high for chat + code (helper calls always low)
         # Context window (tokens) for chat/tool-calling turns. Bigger lets more
         # conversation + recalled memory fit at once, at the cost of more VRAM
         # for the KV cache and (for most local models) some quality falloff

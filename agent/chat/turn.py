@@ -54,6 +54,15 @@ FAKE_STREAM_CHUNK = 24
 # Wording the model gets after a denial - one copy for every front end (agent.chat.helpers.DENIAL_FRAMING).
 
 
+
+# A blank reply mid-task is re-rolled, but at most this often: the same context tends to give the same blank answer, and every
+# re-roll could cost a full output cap (60 steps x 25 % of the window, silently, before).
+MAX_EMPTY_RETRIES = 2
+_CUT_OFF_NOTE = ("Your last reply was cut off by the output limit before you wrote any answer (the thinking used it up). "
+                 "Answer directly and briefly now.")
+_EMPTY_REPLY_STOP = ("(The model returned an empty reply several times in a row, so this turn stops here. Ask again, "
+                     "maybe more specifically, or switch to another model with /model.)")
+
 def tool_message_pair(call_name: str, arguments: dict[str, Any], result: str) -> tuple[dict, dict]:
     """(assistant call message, tool result message) for one resolved tool call, framed like the terminal loop does."""
     call_msg = {"role": "assistant", "content": json.dumps({"tool": call_name, "arguments": arguments})}
@@ -317,6 +326,7 @@ def run_turn(
 
     try:
         iteration = start_iteration
+        empty_retries = 0
         while True:
             if stop.is_set():
                 return abort()
@@ -341,7 +351,12 @@ def run_turn(
             if call is None:
                 content = _strip_thinking_artifacts(message.get("content", ""))
                 if not content.strip() and tools_called:
-                    continue                                    # a blank reply mid-task is a stochastic blip: re-roll
+                    empty_retries += 1
+                    if empty_retries <= MAX_EMPTY_RETRIES:
+                        if message.get("_done_reason") == "length":   # the output cap went to hidden thinking: say so once
+                            messages = [*messages, {"role": "system", "content": _CUT_OFF_NOTE}]
+                        continue                                # a blank reply mid-task is a stochastic blip: re-roll (bounded)
+                    content = _EMPTY_REPLY_STOP
                 if verify_gate is not None and content.strip() and verify_gate.due():
                     retry = gatelib.run_verification(
                         verify_gate,

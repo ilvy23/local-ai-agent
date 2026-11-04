@@ -212,6 +212,9 @@ def _warm_up_model(client: Any, config: dict[str, Any], model: str, notify: Any 
 
     def run() -> None:
         try:
+            facts = client.model_facts(model) if hasattr(client, "model_facts") else None
+            if facts:
+                llm.note_native_ctx(model, facts.get("ctx_max"))
             ctx = tui._num_ctx(config, model)
             llm._remember_ctx(model, ctx)
             llm.mark_foreground(model, ctx)

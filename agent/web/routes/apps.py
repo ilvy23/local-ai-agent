@@ -143,7 +143,10 @@ def prompt_job(body: PromptJob, client=Depends(get_client), config=Depends(get_c
             s = _session(body.sid)
             messages, mode = list(s.get("messages") or []), s.get("mode", body.mode)
         messages.append({"role": "user", "content": msg})
-        reply = "".join(client.chat(messages, model=config["models"]["chat"], num_ctx=8192, temperature=0.4)).strip()
+        from agent import llm as _llm
+
+        chat_model = config["models"]["chat"]                # its own window: a fixed 8192 reloaded the chat model each time
+        reply = "".join(client.chat(messages, model=chat_model, num_ctx=_llm.session_ctx(chat_model, 8192), temperature=0.4)).strip()
         messages.append({"role": "assistant", "content": reply})
         sid = promptlab._save_session(mode, messages, body.sid)
         return {"text": reply, "sid": sid}

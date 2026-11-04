@@ -22,7 +22,9 @@ def backend_name(model: str) -> str:
     try:
         from agent import llm
 
-        return "Vulkan" if model and llm.wants_vulkan(model) else "Ollama"
+        if model and llm.wants_vulkan(model):
+            return "Ollama (Vulkan down)" if llm.vulkan_down() else "Vulkan"
+        return "Ollama"
     except Exception:  # noqa: BLE001
         return "Ollama"
 

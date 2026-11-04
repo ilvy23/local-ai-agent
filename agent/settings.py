@@ -46,6 +46,11 @@ EDITABLE: dict[str, dict[str, Any]] = {
         "help": f"Used for everyday chat and tool use ({brand.CMD} chat/resume). "
                 "Bigger/smarter models feel more capable but reply slower.",
     },
+    "reasoning_effort": {
+        "path": "models.reasoning_effort", "kind": "choice", "choices": ["low", "medium", "high"], "category": "Models",
+        "help": "How long models with a reasoning effort (gpt-oss) think before answering in the chat and the coding agent: "
+                "low = fastest, high = most careful. Helper jobs (memory, summaries) always use low.",
+    },
     "background_model": {
         "path": "models.background", "kind": "model", "category": "Models",
         "help": "Runs quietly to distill facts, summarize chats, and other "

@@ -37,6 +37,17 @@ def missing_model(exc: BaseException) -> str:
 
 def explain(exc: BaseException, model: str | None = None) -> tuple[str, str]:
     """(one line, next hint). Plain text, no markup."""
+    from agent import llm
+
+    if isinstance(exc, llm.VulkanServerDown):
+        return (f"The dual-GPU (Vulkan) Ollama at {exc.url} stopped answering.",
+                "systemctl --user restart ollama-vk   (or: ollama-vk list); the next message tries it again; nightage doctor")
+    if isinstance(exc, llm.OllamaStreamError):
+        detail = " ".join(exc.detail.split())[:160]
+        if re.search(r"out of memory|\bOOM\b|cudaMalloc|vk::|VRAM|memory", detail, re.I):
+            return (f"The model stopped: not enough graphics memory ({detail}).",
+                    "choose a smaller context or model (/model, nightage settings), close other GPU programs; nightage doctor")
+        return f"The model stopped with an error: {detail}.", "try again; if it repeats: nightage doctor"
     name = missing_model(exc)
     if name or (isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 404 and model and "not found" in _detail(exc.response).lower()):
         name = name or model or "this model"

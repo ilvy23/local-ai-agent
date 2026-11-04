@@ -79,6 +79,11 @@ def history_char_budget(config: dict[str, Any]) -> int:
     from agent import gpumode
 
     ctx = gpumode.chat_ctx_override() or int((config.get("models") or {}).get("chat_num_ctx") or 0)
+    chat = str((config.get("models") or {}).get("chat") or "")
+    if ctx and chat:
+        from agent.chat.helpers import _num_ctx
+
+        ctx = _num_ctx(config, chat) or ctx             # the window a turn is really sent with (ceiling, overrides, model maximum)
     return max(base, int(ctx * CHARS_PER_CONTEXT_TOKEN)) if ctx else base
 
 
