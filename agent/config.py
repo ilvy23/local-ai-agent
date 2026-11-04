@@ -235,6 +235,19 @@ def load_config(
     return _finish(copy.deepcopy(DEFAULT_CONFIG), loaded)
 
 
+def resolved(config: dict[str, Any]) -> dict[str, Any]:
+    """`config` with its "auto" model roles resolved against what is installed (agent.modelpick), IN PLACE, for code paths that do
+    not go through the normal start (ollama_local.begin): the web server, `memory search/add/process/repair`, the prompt tools.
+    Without it they used the shipped names (qwen2.5:7b, bge-m3) even when those are not installed. Ollama down: unchanged."""
+    try:
+        from agent import llm, modelpick
+
+        modelpick.resolve_config(config, llm.current_base_url())
+    except Exception:  # noqa: BLE001 - resolution is a convenience; a run must not fail on it
+        pass
+    return config
+
+
 def _without_auto(loaded: Any) -> Any:
     m = loaded.get("models") if isinstance(loaded, dict) else None
     if not isinstance(m, dict):

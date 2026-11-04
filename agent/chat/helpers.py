@@ -53,6 +53,20 @@ def _num_ctx(config: dict[str, Any], model: str | None = None) -> int:
     return min(ctx, native) if ctx and native else ctx            # never more than the model was trained for
 
 
+_MOOD_CFG: dict[str, Any] = {"at": 0.0, "config": None}
+
+
+def _mood_config() -> dict[str, Any]:
+    """The config for the cosmetic mood flag, re-read at most every 5 s (it was parsed again for EVERY status line)."""
+    import time as _time
+
+    from agent.config import load_config
+
+    if _MOOD_CFG["config"] is None or _time.monotonic() - _MOOD_CFG["at"] > 5.0:
+        _MOOD_CFG["config"], _MOOD_CFG["at"] = load_config(), _time.monotonic()
+    return _MOOD_CFG["config"]
+
+
 def _mood(event: str) -> str:
     """Kaomoji prefix for a status line (e.g. "O_o " before "searching..."),
     or "" when the mood side-channel is off or the event isn't mapped
@@ -61,9 +75,8 @@ def _mood(event: str) -> str:
     here just means no kaomoji this time."""
     try:
         from agent import mood as _moodmod
-        from agent.config import load_config
 
-        k = _moodmod.mood_for(event, load_config())
+        k = _moodmod.mood_for(event, _mood_config())
     except Exception:  # noqa: BLE001 - cosmetic only
         return ""
     return f"{k} " if k else ""

@@ -361,21 +361,11 @@ def set_value(name: str, value: Any) -> tuple[str, Any]:
 
 
 def _write_paths(values: dict[str, Any]) -> None:
-    """Write several dotted keys into the user's config.yaml in ONE read-modify-write (never the merged config)."""
-    path = Path(DEFAULT_CONFIG_PATH)
-    data = (yaml.safe_load(path.read_text()) if path.exists() else None) or {}
-    if not isinstance(data, dict):
-        raise ValueError(f"{path} is not a YAML mapping; fix or delete it first")
-    for dotted, value in values.items():
-        node = data
-        parts = dotted.split(".")
-        for part in parts[:-1]:
-            child = node.get(part)
-            if not isinstance(child, dict):
-                child = node[part] = {}
-            node = child
-        node[parts[-1]] = value
-    path.write_text(yaml.safe_dump(data, sort_keys=True))
+    """Write several dotted keys into the user's config.yaml in ONE atomic write - edited in place, so comments and order survive
+    (agent.configio; it never writes the merged config)."""
+    from agent import configio
+
+    configio.set_keys(Path(DEFAULT_CONFIG_PATH), values)
 
 
 def switch_chat_model(config: dict[str, Any], new: str) -> tuple[dict[str, str], str | None]:
@@ -399,7 +389,8 @@ def switch_chat_model(config: dict[str, Any], new: str) -> tuple[dict[str, str],
     if error:
         return changed, f"invalid value for 'chat_model': {error}"
     try:
-        _write_paths({"models.chat": coerced, **{f"models.{role}": model for role, model in changed.items()}})
+        _write_paths({"models.chat": coerced,
+                      **{("code.model" if role == "code" else f"models.{role}"): model for role, model in changed.items()}})
     except (OSError, ValueError, yaml.YAMLError) as exc:
         return changed, str(exc)
     return changed, None

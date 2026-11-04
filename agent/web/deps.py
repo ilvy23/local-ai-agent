@@ -24,7 +24,9 @@ _client: OllamaClient | None = None
 def get_config() -> dict[str, Any]:
     global _config
     if _config is None:
-        _config = load_config()
+        from agent.config import resolved
+
+        _config = resolved(load_config())       # "auto" roles -> installed models (the web never runs the CLI's start-up check)
         try:
             from agent import llm
 

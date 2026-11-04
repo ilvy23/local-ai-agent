@@ -15,7 +15,7 @@ from rich.console import Console
 from rich.table import Table
 
 from agent import foreground
-from agent.config import PROJECT_ROOT, load_config
+from agent.config import PROJECT_ROOT, load_config, resolved
 from agent.llm import OllamaClient
 from agent.memory.store import Store
 from agent.memory.vectors import VectorIndex
@@ -486,7 +486,7 @@ def memory_list() -> None:
 def memory_search(query: str) -> None:
     """Search facts semantically (falls back to substring match)."""
     console = Console()
-    config = load_config()
+    config = resolved(load_config())                 # auto roles -> the models really installed
 
     with _open_store(config) as store:
         vectors = VectorIndex(store)
@@ -542,7 +542,7 @@ def memory_process(
     from agent.memory import queue
 
     console = Console()
-    config = load_config()
+    config = resolved(load_config())
     with _open_store(config) as store:
         before = queue.pending_count(store.conn)
         db_path = store.db_path
@@ -604,7 +604,7 @@ def memory_repair() -> None:
     from agent.memory.distill import _UNEMBEDDED, repair_unembedded
 
     console = Console()
-    config = load_config()
+    config = resolved(load_config())
     with _open_store(config) as store:
         vectors = VectorIndex(store)
         if not vectors.available:
@@ -635,7 +635,7 @@ def memory_repair() -> None:
 def memory_add(text: str) -> None:
     """Manually add a fact (embedded for recall)."""
     console = Console()
-    config = load_config()
+    config = resolved(load_config())                 # auto roles -> the models really installed
 
     with _open_store(config) as store:
         vectors = VectorIndex(store)
@@ -976,6 +976,8 @@ def _home() -> int:
                 settings_mod.interactive(console)
             if console.is_terminal:                      # read the report before the screen is cleared
                 console.input("[dim]Press Enter to go back to the start screen.[/dim] ")
+            if action in ("settings", "doctor"):
+                config = load_config()                   # a model / persona changed in Settings is used by the next chat, no restart
         elif action == "topic":
             from agent.ui.launcher import run_topic
 

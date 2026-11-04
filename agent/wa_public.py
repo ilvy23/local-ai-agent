@@ -493,13 +493,10 @@ def wa_auto_status() -> None:
 
 
 def _set_auto(key: str, value: str) -> None:
-    import yaml
-
+    from agent import configio
     from agent.config import DEFAULT_CONFIG_PATH
 
-    config = load_config()
-    config["whatsapp"].setdefault("auto_reply", {})[key] = value
-    DEFAULT_CONFIG_PATH.write_text(yaml.dump(config, sort_keys=False))
+    configio.set_keys(DEFAULT_CONFIG_PATH, {f"whatsapp.auto_reply.{key}": value})
 
 
 def _set_auto_mode(mode: str) -> None:
@@ -755,8 +752,6 @@ def wa_auto_loop(
     Bounded: it gives up after `max_nudges` unanswered messages and never texts
     during quiet_hours. Requires auto mode. `wa auto off` stops everything.
     """
-    import yaml
-
     from agent.config import DEFAULT_CONFIG_PATH
 
     console = Console()
@@ -773,7 +768,9 @@ def wa_auto_loop(
         if not typer.confirm("Enable loop mode?"):
             return
     lc["enabled"] = state == "on"
-    DEFAULT_CONFIG_PATH.write_text(yaml.dump(config, sort_keys=False))
+    from agent import configio
+
+    configio.set_keys(DEFAULT_CONFIG_PATH, {"whatsapp.auto_reply.loop.enabled": state == "on"})
     if state == "on":
         console.print(f"[magenta]Loop ON[/magenta] — nudges after "
                       f"{lc.get('quiet_after_s',900)//60} min quiet, max "

@@ -35,15 +35,12 @@ def current(config: dict | None = None) -> str:
 
 
 def set_model(name: str) -> None:
-    """Persist the coding executor model to config.yaml under coding.executor.model."""
-    import yaml
+    """Persist the coding model: coding.executor.model AND models.coding - the latter wins when both are set
+    (agent/coding/config.py), so writing only the first one silently changed nothing. Only these keys are written."""
+    from agent import configio
+    from agent.config import DEFAULT_CONFIG_PATH
 
-    from agent.config import DEFAULT_CONFIG_PATH, load_config
-
-    cfg = load_config()
-    coding = cfg.setdefault("coding", {})
-    coding.setdefault("executor", {})["model"] = name
-    DEFAULT_CONFIG_PATH.write_text(yaml.dump(cfg, sort_keys=False))
+    configio.set_keys(DEFAULT_CONFIG_PATH, {"coding.executor.model": name, "models.coding": name})
 
 
 _EFFORTS = [
@@ -54,14 +51,11 @@ _EFFORTS = [
 
 
 def set_effort(level: str) -> None:
-    """Persist coding.build.effort (min|mid|max) to config.yaml."""
-    import yaml
+    """Persist coding.build.effort (min|mid|max) to config.yaml (only that key; comments and `auto` roles stay)."""
+    from agent import configio
+    from agent.config import DEFAULT_CONFIG_PATH
 
-    from agent.config import DEFAULT_CONFIG_PATH, load_config
-
-    cfg = load_config()
-    cfg.setdefault("coding", {}).setdefault("build", {})["effort"] = level
-    DEFAULT_CONFIG_PATH.write_text(yaml.dump(cfg, sort_keys=False))
+    configio.set_keys(DEFAULT_CONFIG_PATH, {"coding.build.effort": level})
 
 
 def choose_effort(console) -> None:

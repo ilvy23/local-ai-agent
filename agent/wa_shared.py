@@ -167,13 +167,12 @@ def write_allowlist(store, config: dict, jids: list[str]) -> None:
     """Write both allowlists together. The config one decides who the AI drafts
     for; the bridge one is the hard stop that makes texting anyone else impossible.
     They must never drift apart — hence one function, never two callers."""
-    import yaml
-
+    from agent import configio
     from agent.config import DEFAULT_CONFIG_PATH
 
     resolved = [j for j in (as_jid(store, e) for e in jids) if j]
     config["whatsapp"]["auto_reply_contacts"] = resolved
-    DEFAULT_CONFIG_PATH.write_text(yaml.dump(config, sort_keys=False))
+    configio.set_keys(DEFAULT_CONFIG_PATH, {"whatsapp.auto_reply_contacts": resolved})      # only this key, never the merged config
     bridge_allowlist_path(config).write_text("\n".join(resolved) + ("\n" if resolved else ""))
 
 

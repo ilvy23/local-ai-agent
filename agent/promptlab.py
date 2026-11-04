@@ -327,9 +327,9 @@ def refine(llm, cfg, current: str, feedback: str) -> str:
 
 # ── interactive helpers ─────────────────────────────────────────────────────
 def _client_cfg():
-    from agent.config import load_config
+    from agent.config import load_config, resolved
     from agent.llm import OllamaClient
-    return OllamaClient(), load_config()
+    return OllamaClient(), resolved(load_config())          # "auto" chat role -> the model really installed
 
 
 def _box(console: Console, title: str, body: str) -> None:

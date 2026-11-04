@@ -174,6 +174,11 @@ def resolve(models_cfg: dict, user_roles: set[str] | list[str], models: dict[str
         if not want:
             res.roles[role] = Pick("", src(role), None)
             continue
+        if role != "chat" and chosen_chat and role not in user and role not in (profile_roles or set()):
+            # not chosen in config.yaml ("auto" / the shipped default): follow the chat model - an installed shipped default
+            # (qwen2.5:7b) used to win, so memory work loaded a SECOND model behind the one the user picked
+            res.roles[role] = Pick(chosen_chat, "auto", True)
+            continue
         if has(want, models):
             res.roles[role] = Pick(want, src(role), True)
             if role == "chat":
@@ -372,6 +377,10 @@ def follow_chat(config: dict, old: str, new: str) -> dict[str, str]:
         if cur and cur != new and (cur == old or role not in user):
             models[role] = new
             changed[role] = new
+    code = config.get("code")
+    if isinstance(code, dict) and code.get("model") and code.get("model") == old:
+        code["model"] = new                     # the coding agent's model followed the chat model too (saved as code.model)
+        changed["code"] = new
     return changed
 
 
