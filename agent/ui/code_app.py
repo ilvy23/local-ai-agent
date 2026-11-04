@@ -322,7 +322,7 @@ class CodeSession:
         from agent import mentions
 
         try:
-            exp = mentions.expand(prompt)
+            exp = mentions.expand(prompt, as_task=True)
         except Exception:  # noqa: BLE001 - a file mention must never break a run
             return prompt
         say = getattr(getattr(self.app, "renderer", None), "info", None)

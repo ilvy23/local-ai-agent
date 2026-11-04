@@ -146,6 +146,10 @@ def _one_line(text: str, limit: int) -> str:
     return t if len(t) <= limit else t[: limit - 1] + "…"
 
 
+_OWN_TOOL_ERROR = re.compile(r"needs path|invalid arguments for tool|no such tool|NOT APPLIED|NOT CHANGED|not the lines you saw|"
+                             r"search text not found|search text matches \d+ places|missing required argument", re.I)
+
+
 class CodeEngine:
     def __init__(
         self, root: Path | str, config: dict[str, Any], llm: Any, console: Any, *, ask_fn: Callable[[str], str] | None = None,
@@ -1677,6 +1681,11 @@ class CodeEngine:
 
     def _react_to_stuck(self, verdict: Any) -> None:
         web = self.registry.get("web_search")
+        if _OWN_TOOL_ERROR.search(str(getattr(verdict, "query", "") or "")):     # the web knows nothing about our own tools' messages
+            self.ctx.add({"role": "system", "content": "The same tool error keeps coming back. The tool's message says exactly what to send: follow "
+                          "it literally (edits: show_symbol, then replace_lines(path, start, end, new_text, expect=\"#hash\") with those numbers; "
+                          "or write_file the whole small file) - do not repeat the call that failed."})
+            return
         if web is None or not autonomy.enabled(self.config):
             self.ctx.add({"role": "system", "content": "The same error keeps coming back. Read it carefully, check the real API with outline/search, and try a different approach."})
             return

@@ -192,7 +192,7 @@ def code(
         if task:
             from agent import mentions
 
-            task = mentions.expand(task).text            # `nightage code @prompt.md`: the file's text is the task
+            task = mentions.expand(task, as_task=True).text            # `nightage code @prompt.md`: the file's text is the task
         raise typer.Exit(run_session(folder, task, new, list(file) or None, test, which, **extra))
     from agent.ui.code_app import run_code_ui
 

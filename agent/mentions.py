@@ -24,6 +24,7 @@ MAX_FILE_BYTES = 8 * 2**20             # a prompt file is small; a bigger one is
 _MENTION = re.compile(r'(?<!\S)@(?:"([^"\n]+)"|(\S+))')
 _TRAILING = ".,;:!?)]}'\""
 ONLY_FILES = "The user's message is the text of the file below. Read all of it and follow it as their request."
+TASK_NOTE = "[This task is the text of the file {name} in the project folder: read it again for the details of any part.]"
 
 
 @dataclass
@@ -61,10 +62,13 @@ def _find(raw: str, cwd: Path) -> tuple[Path, str] | None:
     return None
 
 
-def expand(text: str, cwd: str | Path | None = None, limit: int | None = None) -> Expansion:
+def expand(text: str, cwd: str | Path | None = None, limit: int | None = None, *, as_task: bool = False) -> Expansion:
+    """`as_task` (the coding agent): a message that is only `@file` becomes the file's own text, so the task starts with the
+    spec's first lines (stage titles, "create a new project" detection), followed by TASK_NOTE naming the file."""
     base = Path(cwd) if cwd is not None else Path.cwd()
     room = limit if limit is not None else limit_for()
     blocks: list[str] = []
+    bodies: list[str] = []
     out = Expansion(text)
     used: list[tuple[int, int]] = []
     seen: set[str] = set()
@@ -103,12 +107,16 @@ def expand(text: str, cwd: str | Path | None = None, limit: int | None = None) -
         seen.add(key)
         used.append(m.span())
         blocks.append(f'<file name="{name}" chars="{n}">\n{content}\n</file>')
+        bodies.append(content)
         out.files.append((name, n))
     if not blocks:
         return out
     rest = text
     for start, end in sorted(used, reverse=True):
         rest = rest[:start] + rest[end:]
+    if as_task and not rest.strip():
+        out.text = "\n\n".join(bodies) + "\n\n" + " ".join(TASK_NOTE.format(name=name) for name, _n in out.files)
+        return out
     lead = ONLY_FILES if not rest.strip() else text.rstrip()
     out.text = lead + "\n\n" + "\n\n".join(blocks)
     return out

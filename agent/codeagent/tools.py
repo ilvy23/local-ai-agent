@@ -281,6 +281,9 @@ def cap_output(text: str, head: int = OUT_HEAD, tail: int = OUT_TAIL) -> str:
     return f"{text[:head]}\n[… {len(text) - head - tail} chars omitted …]\n{text[-tail:]}"
 
 
+EOF_HINT = ("\n[note: the program waits for keyboard input and got none - that is not a bug in it. Run it with stdin=\"1\\n\\n\" (the answers it should read) or test the logic in a test; use tui_smoke for a full-screen UI.]")
+
+
 class CodeTools:
     def __init__(self, root: Path, profile: profile_mod.Profile, ctx: ContextManager, console: Any | None = None,
                  web_tools: list[Tool] | None = None, plan_tool: Tool | None = None, note_tool: Tool | None = None,
@@ -327,6 +330,7 @@ class CodeTools:
         self._removed_note = ""                         # set by _bookkeep for a write that dropped a still-used symbol; _xref_note appends it once
         self.on_write: Any = None                       # (rel path, old text or None, new text) after every file-tool write (the stage cursor)
         self.on_read: Any = None                        # (rel path, first line, last line) of what a read really showed; (rel, None, None) for a placeholder (fileseen.py)
+        self.shown_spans: dict[str, list[tuple[int, int]]] = {}   # path -> (start, end) of blocks show_symbol printed with a #hash
         self.line_views: dict[str, str] = {}            # path -> file hash when the model last saw its line numbers (replace_lines checks it)
 
     # ── paths ───────────────────────────────────────────────────────────
@@ -583,6 +587,7 @@ class CodeTools:
             items = edits.outline(str(p), text, 40)
             return f"no symbol '{name}' in {self.rel(p)}. Its outline:\n" + ("\n".join(items) or "(none)")
         self.line_views[self.rel(p)] = symbols.file_hash(text)
+        self.shown_spans.setdefault(self.rel(p), []).append((span.start, span.end))
         self.read_lines += span.end - span.start + 1
         return (symbols.show(self.rel(p), text, span) + "\n[change it with replace_lines(path, start, end, new_text, expect=\"<the #hash>\") - "
                 "no need to quote the old text; the numbers are not part of the code]")
@@ -598,7 +603,13 @@ class CodeTools:
         if expect not in (None, ""):
             want = str(expect).strip().lstrip("#").lower()
             got = symbols.range_hash(lines[s - 1:e])
-            return "" if want == got else f"lines {s}-{e} are not the lines you saw (#{want}; now #{got})"
+            if want == got:
+                return ""
+            # the #hash of a whole symbol (show_symbol) used for a few of its lines: fine while that symbol is unchanged
+            for a, b in self.shown_spans.get(rel, []):
+                if a <= s and e <= b <= len(lines) and symbols.range_hash(lines[a - 1:b]) == want:
+                    return ""
+            return f"lines {s}-{e} are not the lines you saw (#{want}; now #{got})"
         seen = self.line_views.get(rel)
         if seen is None:
             return "you have not seen line numbers of this file yet"
@@ -1279,6 +1290,8 @@ class CodeTools:
         snap = None if readonly_shell(command) else snapshot_tree(self.root, keep_ro=True, protect=self.protect)    # a look cannot change files: no snapshot
         try:
             code, out, secs = self._exec(actual, t, stdin, no_sleep=no_sleep, watch=tee)
+            if code != 0 and not stdin and "EOFError" in out:
+                out += EOF_HINT
             unfiltered = tee.read_bytes()[:2_000_000].decode("utf-8", errors="replace") if tee else None
         finally:
             if tee:

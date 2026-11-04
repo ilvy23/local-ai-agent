@@ -102,6 +102,20 @@ def _one_line(text: str, limit: int) -> str:
     return t if len(t) <= limit else t[: limit - 1] + "…"
 
 
+MODEL_TASK_CHARS = 60_000      # the stage planner reads the whole task (a 25 kB spec given as @prompt.md was cut at 8,000 before)
+_TASK_FILE = re.compile(r"\[This task is the text of the file (.+?) in the project folder")
+
+
+def _overall(task: str) -> str:
+    """'Overall task: <first 300 chars>' for a stage goal; when the task came from a file (`@prompt.md`), each stage - which runs in
+    a fresh context - is told to read that file for the details of its part, so a long spec is not reduced to 300 characters."""
+    head = f"Overall task: {_one_line(task, 300)}"
+    names = list(dict.fromkeys(_TASK_FILE.findall(str(task))))
+    if names:
+        head += f" (full task text: the file {', '.join(names)} - read the parts this stage needs with read_file before you start)"
+    return head
+
+
 def _num(value: Any, default: float) -> float:
     try:
         return float(value)
@@ -307,7 +321,7 @@ def _cap_count(blocks: list[str], limit: int = MAX_STAGES) -> list[str]:
 
 
 def _plan_of(task: str, pairs: list[tuple[str, str]], source: str) -> StagePlan:
-    head = f"Overall task: {_one_line(task, 300)}"
+    head = _overall(task)
     return StagePlan([Stage(n, title, f"{head}\n\n{goal}") for n, (title, goal) in enumerate(pairs, 1)], 0, source, task)
 
 
@@ -381,7 +395,7 @@ def _model_split(llm: Any, cfg: dict[str, Any], task: str, model: str | None = N
     key = hashlib.sha1(task.encode("utf-8")).hexdigest()
     if cache is not None and key in cache:
         return [(str(t), str(g)) for t, g in cache[key]] or None
-    reply = _ask(llm, cfg, _MODEL_SYSTEM, task[:8000], model, MODEL_NUM_PREDICT)
+    reply = _ask(llm, cfg, _MODEL_SYSTEM, task[:MODEL_TASK_CHARS], model, MODEL_NUM_PREDICT)
     if reply is None:
         return None
     try:
@@ -609,7 +623,7 @@ def range_plan(task: str, root: Any, cfg: Any, blocks: list[str] | None = None) 
     ranged = _range_substages(st, named, root, range_lines_of(cfg))
     if ranged is None:
         return None
-    head = f"Overall task: {_one_line(task, 300)}"
+    head = _overall(task)
     subs, ranges = ranged
     stages = [_sub_stage(head, title, goal, files, r, 0) for (title, goal, files), r in zip(subs, ranges)]
     if _TESTS_WORD.search(task) or any(_is_test_path(rel) for rel, _n, _c in repo):
@@ -1083,7 +1097,7 @@ class _Runner:
     def _apply_resplit(self, st: Stage, subs: list[tuple[str, str, list[str]]], source: str, ranges: list[tuple[int, int, int] | None] | None = None) -> None:
         plan = self.plan
         i = plan.stages.index(st)
-        head = f"Overall task: {_one_line(plan.task or st.goal, 300)}"
+        head = _overall(plan.task or st.goal)
         ranges = ranges or [None] * len(subs)
         new = [_sub_stage(head, title, goal, files, r, st.id) for (title, goal, files), r in zip(subs, ranges)]
         plan.stages[i:i + 1] = new
