@@ -544,6 +544,15 @@ def begin(config: dict | None, *, say: Callable[[str], None] | None = None, requ
         except Exception as exc:  # noqa: BLE001 - advice must never stop a run that could work
             if say is not None:
                 say(f"(model check skipped: {type(exc).__name__})")
+    if "models" in config:
+        # From here on the chat / code model is protected: a background call (the memory catch-up a moment after start) must not
+        # load it elsewhere - with num_gpu 0 it used to land 100 % on the CPU before the first message.
+        try:
+            from agent import llm
+
+            llm.protect_roles(config)
+        except Exception:  # noqa: BLE001
+            pass
     return res
 
 

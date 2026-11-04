@@ -195,12 +195,14 @@ def _print_start(app: Any, state: ChatState, quiet: Console, resumed_id: int | N
     tui._warn_if_model_cannot_use_tools(Console(file=buf, force_terminal=False, width=100), client, state.model)
     if buf.getvalue().strip():
         r.notice(" ".join(buf.getvalue().split()))
-    _warm_up_model(client, state.config, state.model)
+    _warm_up_model(client, state.config, state.model, notify=r.notice)
 
 
-def _warm_up_model(client: Any, config: dict[str, Any], model: str) -> None:
+def _warm_up_model(client: Any, config: dict[str, Any], model: str, notify: Any = None) -> None:
     """Load the chat model in the background while the user is still typing, with the SAME context the first turn will use (a different
-    num_ctx would make Ollama reload it), so the first answer does not wait ~10 s for the load."""
+    num_ctx would make Ollama reload it), so the first answer does not wait ~10 s for the load. Then check WHERE it landed: on a
+    machine with a usable GPU a chat model that sits 100 % on the CPU (a leftover CPU-only load) is reloaded once, and the user is
+    told what happened (`notify`)."""
     import threading
 
     from agent import llm, tui
@@ -210,12 +212,36 @@ def _warm_up_model(client: Any, config: dict[str, Any], model: str) -> None:
 
     def run() -> None:
         try:
-            llm._remember_ctx(model, tui._num_ctx(config, model))
+            ctx = tui._num_ctx(config, model)
+            llm._remember_ctx(model, ctx)
+            llm.mark_foreground(model, ctx)
             client.preload(model)
+            message = repair_cpu_placement(client, model)
+            if message and notify is not None:
+                notify(message)
         except Exception:  # noqa: BLE001 - warming up is an optimisation, never an error
             pass
 
     threading.Thread(target=run, name="model-warmup", daemon=True).start()
+
+
+def repair_cpu_placement(client: Any, model: str) -> str | None:
+    """None when `model` runs (at least partly) on the GPU, or nothing can be said. A model loaded 100 % on the CPU on a machine
+    with a usable GPU is unloaded and loaded again once; the answer says how that went."""
+    from agent import gpumode, llm
+
+    if llm.is_remote() or not gpumode.current_mode() or not hasattr(client, "placement"):
+        return None
+    where = client.placement(model)
+    if not where or where.get("size_vram", 0) > 0:
+        return None
+    client.unload(model)
+    client.preload(model)
+    again = client.placement(model)
+    if again and again.get("size_vram", 0) > 0:
+        return f"{model} had been loaded on the CPU only - it was reloaded and now runs on the GPU."
+    return (f"{model} runs on the CPU only (slow): the graphics memory seems full. Close other GPU programs, pick a smaller "
+            "model (/model) or a smaller context, then start again. Details: nightage doctor")
 
 
 def _shutdown(app: Any, state: ChatState, client: Any, config: dict[str, Any], unload: bool) -> None:

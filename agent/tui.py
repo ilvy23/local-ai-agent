@@ -225,6 +225,33 @@ def _looks_like_disagreement(text: str) -> bool:
     return bool(_DISAGREE_CUE.search(text))
 
 
+_CORRECTION_NUDGE_SOFT = (
+    "The user may be disputing something you said. If they are correcting a FACT you stated, do not answer from memory and "
+    "do not simply agree: check it with web_search first, then reply based on what you find. Otherwise just answer normally."
+)
+
+
+def _helper_would_evict_chat(config: dict[str, Any]) -> bool:
+    """True when the background model IS the chat model (the usual setup since /model moves every role): a helper call on it
+    replaces the conversation Ollama keeps cached, and the reply then re-reads the whole chat first."""
+    from agent import llm
+
+    models = (config or {}).get("models") or {}
+    bg = str(models.get("background") or "")
+    return bool(bg) and (bg == str(models.get("chat") or "") or llm.is_protected(bg))
+
+
+def correction_nudge(client: Any, config: dict[str, Any], assistant_text: str, user_text: str) -> str | None:
+    """The system note for a turn where the user may be correcting a fact we stated, or None. The cheap word cue decides
+    whether to look at all; the classifier then runs only on a SEPARATE background model - on the chat model itself it would
+    cost a re-read of the whole conversation, so a softer note lets the chat model judge it itself."""
+    if not _looks_like_disagreement(user_text):
+        return None
+    if _helper_would_evict_chat(config):
+        return _CORRECTION_NUDGE_SOFT
+    return _CORRECTION_NUDGE if _is_factual_correction(client, config, assistant_text, user_text) else None
+
+
 def _is_factual_correction(
     client: Any, config: dict[str, Any], assistant_text: str, user_text: str
 ) -> bool:
@@ -233,21 +260,15 @@ def _is_factual_correction(
     Both sides are needed: "no, those aren't in there" says nothing on its own —
     without the answer it refers to, the classifier can only shrug and say no.
     """
+    from agent import llm
+
     pair = f"Assistant said: {assistant_text[:1500]}\n\nUser replied: {user_text}"
     try:
-        reply = "".join(
-            client.chat(
-                messages=[
-                    {"role": "system", "content": _CORRECTION_CHECK},
-                    {"role": "user", "content": pair},
-                ],
-                model=config["models"]["background"],
-                stream=False,
-            )
-        ).strip().lower()
+        reply, _why = llm.utility_chat(client, [{"role": "system", "content": _CORRECTION_CHECK}, {"role": "user", "content": pair}],
+                                       config["models"]["background"], num_predict=256)
     except Exception:  # noqa: BLE001 - if unsure, leave the turn alone
         return False
-    return reply.startswith("yes")
+    return reply.strip().lower().startswith("yes")
 
 
 def _split_web_trigger(text: str) -> tuple[str, bool]:
@@ -277,20 +298,17 @@ def _rewrite_search_query(raw_message: str, client: Any, config: dict[str, Any])
     Uses the background model (cheap/fast), never blocks the search on
     failure - falls back to the raw message unchanged.
     """
+    from agent import llm
+
+    if _helper_would_evict_chat(config):
+        return raw_message              # a rewrite on the chat model itself would cost a re-read of the whole conversation
     try:
-        rewritten = "".join(
-            client.chat(
-                messages=[
-                    {"role": "system", "content": _QUERY_REWRITE_SYSTEM},
-                    {"role": "user", "content": raw_message},
-                ],
-                model=config["models"]["background"],
-                stream=False,
-            )
-        ).strip()
+        rewritten, _why = llm.utility_chat(client, [{"role": "system", "content": _QUERY_REWRITE_SYSTEM},
+                                                    {"role": "user", "content": raw_message}],
+                                           config["models"]["background"], num_predict=256)
     except Exception:  # noqa: BLE001 - never block a search on the rewrite failing
         return raw_message
-    return rewritten or raw_message
+    return rewritten.strip() or raw_message
 
 CONNECTION_HINT = (
     "[red]Could not reach Ollama.[/red] Is it running? Try: [bold]ollama serve[/bold]"
@@ -1633,15 +1651,10 @@ def run_repl(
                 session_id, "tool", f"Web search results for {search_query!r}:\n{results}"
             )
             messages = [*messages, {"role": "system", "content": _WEB_INJECT + results}]
-        elif (
-            last_reply
-            and tool_registry.get("web_search")
-            and _looks_like_disagreement(user_input)
-            and _is_factual_correction(client, config, last_reply, user_input)
-        ):
+        elif last_reply and tool_registry.get("web_search") and (nudge := correction_nudge(client, config, last_reply, user_input)):
             # The cheap cue keeps the classifier off the ~90% of turns that
             # couldn't be a correction, so a normal message costs nothing extra.
-            messages = [*messages, {"role": "system", "content": _CORRECTION_NUDGE}]
+            messages = [*messages, {"role": "system", "content": nudge}]
 
         try:
             reply, tools_used = _run_agent_turn(
@@ -1741,16 +1754,12 @@ def _save_learned_facts(
             if evidence:
                 transcript += "\n\nSources:\n" + "\n".join(
                     f"- {s['domain']} ({s.get('date') or 'undated'}): {s['passage'][:600]}" for s in evidence["sources"])
-            extracted = "".join(
-                client.chat(
-                    messages=[
-                        {"role": "system", "content": _FACT_EXTRACT_SYSTEM},
-                        {"role": "user", "content": transcript},
-                    ],
-                    model=config["models"]["background"],
-                    stream=False,
-                )
-            ).strip()
+            from agent import llm as _llm
+
+            extracted, _why = _llm.utility_chat(client, [{"role": "system", "content": _FACT_EXTRACT_SYSTEM},
+                                                         {"role": "user", "content": transcript}],
+                                                config["models"]["background"])
+            extracted = extracted.strip()
 
             if not extracted or extracted.upper() == "NONE" or JUNK_FACT_RE.search(extracted) or _URL_RE.search(extracted):
                 continue

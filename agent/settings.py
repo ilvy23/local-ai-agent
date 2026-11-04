@@ -381,10 +381,15 @@ def switch_chat_model(config: dict[str, Any], new: str) -> tuple[dict[str, str],
     Returns ({role: model} of the roles that followed, None) or (..., why saving failed)."""
     from agent import modelpick
 
+    from agent import llm
+
     models = config.setdefault("models", {})
     old = str(models.get("chat") or "")
     changed = modelpick.follow_chat(config, old, new)
     models["chat"] = new
+    if old and old != new:
+        llm.unprotect(old)                       # no longer the model the user works with
+    llm.protect_roles(config)
     coerced, error = validate("chat_model", new)
     if error:
         return changed, f"invalid value for 'chat_model': {error}"

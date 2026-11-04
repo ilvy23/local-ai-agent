@@ -144,7 +144,7 @@ def write_prose(llm: Any, config: dict[str, Any], root: Path | str | None, reque
     try:
         from agent import llm as _llm
 
-        if model in _llm._foreground_models:      # the same model is serving the chat: CPU-only options would reload it 100 % on the CPU
+        if _llm.is_protected(model):              # the same model is serving the chat: CPU-only options would reload it 100 % on the CPU
             use_gpu = True
     except Exception:  # noqa: BLE001
         pass

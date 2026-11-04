@@ -25,6 +25,12 @@ def get_config() -> dict[str, Any]:
     global _config
     if _config is None:
         _config = load_config()
+        try:
+            from agent import llm
+
+            llm.protect_roles(_config)          # the web chat's model keeps the GPU and its window for background helpers too
+        except Exception:  # noqa: BLE001
+            pass
     return _config
 
 

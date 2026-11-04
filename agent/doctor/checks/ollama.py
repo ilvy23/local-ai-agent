@@ -130,5 +130,20 @@ def loaded(ctx: Context):
     partial = [m for m in ps if 0 < int(m.get("size_vram") or 0) < int(m.get("size") or 0)]
     if partial:
         return warn("; ".join(rows), "A model split between GPU and CPU is slow: use a smaller model or a smaller context.")
+    cpu_only = [m for m in ps if not int(m.get("size_vram") or 0)
+                and not re.search(r"embed|bge|minilm|nomic|e5-|gte-", str(m.get("name", "")), re.I)]   # embedders run on the CPU on purpose
+    if cpu_only and _gpu_present():
+        return warn("; ".join(rows), "A chat model runs on the CPU only although a GPU is there (very slow). Unload it "
+                                     "(`ollama stop <model>`) and start the chat again: it is then loaded on the GPU. If it stays on "
+                                     "the CPU, the graphics memory is full (other programs, or a context too big for it).")
     return info("; ".join(rows))
+
+
+def _gpu_present() -> bool:
+    try:
+        from agent import gpumode, llm
+
+        return bool(gpumode.current_mode()) and not llm.is_remote()
+    except Exception:  # noqa: BLE001
+        return False
 

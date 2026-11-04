@@ -205,6 +205,12 @@ class CodeEngine:
         self._in_place_failures = 0
         self.watcher = autonomy.StuckWatcher(max_lookups=int((config.get("autonomy") or {}).get("max_lookups_per_turn", 3)))
         self.think_steps = 0
+        try:
+            from agent import llm as _llm_mod
+
+            _llm_mod.mark_foreground(self.model, self.num_ctx)     # its background side calls keep the GPU and this window
+        except Exception:  # noqa: BLE001
+            pass
         self.verify_not_run: list[str] = []               # checks _verify could not run (blocked / declined / not installed)
         self.on_step: Any = None                   # session.py hooks the autosave in here (a killed run keeps its conversation)
         self.live = LiveControl()                  # live-UI control state (livectl.py): steer queue, pause / stop / compact requests, extra step hooks, "now"

@@ -227,8 +227,11 @@ def test_speculative_options_only_for_vulkan_models(monkeypatch):
 
     monkeypatch.delenv("AGENT_DRAFT_TOKENS", raising=False)
     monkeypatch.setenv("AGENT_VULKAN_MODELS", r"qwen[^\s]*27b")
-    assert llm.speculative_options("qwen3.8:27b") == {"draft_num_predict": 4}
+    assert llm.speculative_options("qwen3.8:27b") == {"draft_num_predict": 2}        # the fastest value measured (4 was the slowest)
     assert llm.speculative_options("qwen3:4b") == {}
+    monkeypatch.setenv("AGENT_VULKAN_MODELS", ".*")
+    assert llm.speculative_options("gpt-oss:20b") == {}                             # no draft head: never a draft option
+    monkeypatch.setenv("AGENT_VULKAN_MODELS", r"qwen[^\s]*27b")
     monkeypatch.setenv("AGENT_DRAFT_TOKENS", "3")
     assert llm.speculative_options("qwen3.8:27b") == {"draft_num_predict": 3}
     monkeypatch.setenv("AGENT_DRAFT_TOKENS", "-1")
@@ -256,7 +259,7 @@ def test_background_chat_is_capped_and_cpu_only_on_vulkan(monkeypatch):
     monkeypatch.setattr(llm.OllamaClient, "_client_for", lambda self, model: FakeClient())
     monkeypatch.setenv("AGENT_VULKAN_MODELS", ".*")
     monkeypatch.delenv("AGENT_BG_CPU", raising=False)
-    llm._foreground_models.discard("qwen3:4b")
+    monkeypatch.setattr(llm.OllamaClient, "_vram_taken_by_other", lambda self, model: True)   # another model holds the GPUs
     try:
         "".join(client.chat([{"role": "user", "content": "x"}], "qwen3:4b", stream=False, background=True))
     except Exception:
@@ -432,12 +435,11 @@ def test_background_call_on_the_chat_model_never_forces_cpu(monkeypatch):
     monkeypatch.setattr(llm.OllamaClient, "_client_for", lambda self, model: FakeClient())
     monkeypatch.setenv("AGENT_VULKAN_MODELS", ".*")
     monkeypatch.delenv("AGENT_BG_CPU", raising=False)
-    llm._foreground_models.add("gpt-oss:20b")
-    try:
-        "".join(client.chat([{"role": "user", "content": "x"}], "gpt-oss:20b", stream=False, background=True))
-    finally:
-        llm._foreground_models.discard("gpt-oss:20b")
-    assert "num_gpu" not in seen["payload"]["options"]
+    monkeypatch.setattr(llm.OllamaClient, "_vram_taken_by_other", lambda self, model: True)
+    llm.mark_foreground("gpt-oss:20b", 65536)
+    "".join(client.chat([{"role": "user", "content": "x"}], "gpt-oss:20b", stream=False, background=True))
+    opts = seen["payload"]["options"]
+    assert "num_gpu" not in opts and opts["num_ctx"] == 65536          # its own window: no reload either
 
 
 def test_follow_chat_moves_the_other_roles_and_keeps_deliberate_ones(tmp_path, monkeypatch):

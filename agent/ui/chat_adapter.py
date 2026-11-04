@@ -292,9 +292,8 @@ def run_chat_turn(
         _emit_sources(ctl)
         s.store.add_message(s.session_id, "tool", f"Web search results for {query!r}:\n{results}")
         messages = [*messages, {"role": "system", "content": tui._WEB_INJECT + results}]
-    elif (s.last_reply and s.registry.get("web_search") and tui._looks_like_disagreement(user_input)
-          and tui._is_factual_correction(s.client, s.config, s.last_reply, user_input)):
-        messages = [*messages, {"role": "system", "content": tui._CORRECTION_NUDGE}]
+    elif s.last_reply and s.registry.get("web_search") and (nudge := tui.correction_nudge(s.client, s.config, s.last_reply, user_input)):
+        messages = [*messages, {"role": "system", "content": nudge}]
 
     usage: dict[str, Any] = {}
 

@@ -353,8 +353,9 @@ def release_gpu_on_exit(console: Console, llm: Any, config: dict[str, Any]) -> N
 def free_gpu(console: Console, llm: Any, model: str) -> None:
     """Unload every other model so the coding model has the VRAM to itself."""
     try:
-        base = model.split(":")[0]
-        others = [m for m in loaded_models_of(llm) if m.split(":")[0] != base and "embed" not in m and "bge" not in m]
+        from agent.llm import same_model
+
+        others = [m for m in loaded_models_of(llm) if not same_model(m, model) and "embed" not in m and "bge" not in m]
         for m in others:
             unload_model(llm, m)
         if others:

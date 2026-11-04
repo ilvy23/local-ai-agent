@@ -61,6 +61,16 @@ def _isolated_config_file(monkeypatch, tmp_path_factory):
     yield fake
 
 
+@pytest.fixture(autouse=True)
+def _fresh_model_protection():
+    """agent.llm's protected models (the chat / code model of a session) are process-wide: every test starts without any."""
+    from agent import llm
+
+    llm.reset_protection()
+    yield
+    llm.reset_protection()
+
+
 def pytest_collection_modifyitems(config, items):
     """Tests marked `posix_only` need bash / a pty / fcntl / /proc and are skipped on Windows (the CI matrix runs a subset there)."""
     if sys.platform != "win32":

@@ -260,14 +260,16 @@ _MAX_AUTO_NUM_PREDICT = 32768
 # draft head) is lossless - the main model verifies every drafted token - but the
 # Modelfile default of 4 drafted tokens was too greedy on the dual-GPU setup it was
 # measured on (a 27B model: 4 -> 19 tok/s, 3 -> 24, 2 -> 36, 1 -> 32). `AGENT_DRAFT_TOKENS=<n>` overrides, `-1` leaves the model's default.
-DEFAULT_DRAFT_TOKENS = 4
+DEFAULT_DRAFT_TOKENS = 2           # the fastest value of the measurement above (4 was the slowest)
+_DRAFT_HEAD = re.compile(r"qwen3\.[5-9]", re.IGNORECASE)          # the family that ships an MTP draft head
 
 
 def speculative_options(model: str) -> dict[str, Any]:
-    """`draft_num_predict` for models served by the Vulkan (0.34+, MTP-capable) server."""
+    """`draft_num_predict` for draft-head models (qwen3.5+) served by the Vulkan (0.34+, MTP-capable) server - never for others
+    (gpt-oss has no draft head; the option only costs it a different runner)."""
     raw = os.environ.get("AGENT_DRAFT_TOKENS", "").strip()
     value = int(raw) if raw.lstrip("-").isdigit() else DEFAULT_DRAFT_TOKENS
-    if value < 0 or not wants_vulkan(model):
+    if value < 0 or not _DRAFT_HEAD.search(model or "") or not wants_vulkan(model):
         return {}
     return {"draft_num_predict": value}
 
@@ -310,13 +312,135 @@ def _remember_ctx(model: str, num_ctx: int | None) -> None:
         _last_num_ctx[model] = int(num_ctx)
 
 
-# Models this process has used for real (foreground) chat turns. A background call on the SAME model must not ask for
-# `num_gpu: 0`: Ollama treats different options as a different runner, reloads the model with zero GPU layers and the chat
-# model then sits 100 % on the CPU (seen with gpt-oss:20b on the dual-GPU server, where every role follows the chat model).
-_foreground_models: set[str] = set()
+# The models the user is actually working with (the chat / code model) and the context window each runs with. A background call
+# on one of them never asks for `num_gpu: 0` and always uses that same window: Ollama treats a different num_gpu / num_ctx as a
+# different runner and reloads the model (8-10 s) - and a reload with num_gpu 0 left gpt-oss:20b 100 % on the CPU for the rest of
+# the session, because a later request WITHOUT num_gpu happily reuses that CPU runner. Marked when a session starts
+# (protect_roles: before the memory catch-up's first background call), by every foreground request and by preload().
+_protected: dict[str, int | None] = {}
+_protect_lock = threading.Lock()
+
+
+def mark_foreground(models: Any, num_ctx: int | None = None) -> None:
+    """Protect `models` (a name or an iterable of names); `num_ctx` is the window they run with (the latest one wins)."""
+    names = [models] if isinstance(models, str) else list(models or [])
+    with _protect_lock:
+        for name in names:
+            if name:
+                _protected[name] = int(num_ctx) if num_ctx else _protected.get(name)
+
+
+def same_model(a: str, b: str) -> bool:
+    """Do two model names mean the same model? "x" and "x:latest" may (latest can be any size); two explicit tags must be equal
+    ("gpt-oss:20b" is not "gpt-oss:120b")."""
+    if a == b:
+        return True
+    (b1, _, t1), (b2, _, t2) = (a or "").partition(":"), (b or "").partition(":")
+    return bool(b1) and b1 == b2 and (t1 in ("", "latest") or t2 in ("", "latest"))
+
+
+def unprotect(model: str) -> None:
+    with _protect_lock:
+        _protected.pop(model, None)
+
+
+def is_protected(model: str) -> bool:
+    return bool(model) and model in _protected
+
+
+def protected_ctx(model: str) -> int | None:
+    return _protected.get(model)
+
+
+def reset_protection() -> None:
+    with _protect_lock:
+        _protected.clear()
+
+
+def protect_roles(config: dict | None) -> None:
+    """Protect the chat model and the coding agent's model of this config, with the window a chat turn sends."""
+    models = (config or {}).get("models") or {}
+    chat = str(models.get("chat") or "")
+    code = str(((config or {}).get("code") or {}).get("model") or "")
+    ctx: int | None = None
+    if chat:
+        try:
+            from agent.chat.helpers import _num_ctx
+
+            ctx = _num_ctx(config or {}, chat)
+        except Exception:  # noqa: BLE001 - protection works without a known window too
+            ctx = None
+        mark_foreground(chat, ctx)
+    if code and code != chat:
+        mark_foreground(code, None)
 
 
 _CLEAN_THINK_OFF = re.compile(r"qwen3\.[5-9]", re.IGNORECASE)
+
+
+_EFFORT_LEVELS = re.compile(r"gpt-oss", re.IGNORECASE)
+BACKGROUND_NUM_PREDICT_EFFORT = 4096         # thinking counts against the cap: a little more room than BACKGROUND_NUM_PREDICT
+
+
+def uses_effort_levels(model: str) -> bool:
+    """True for models whose `think` is a reasoning EFFORT ("low" / "medium" / "high") and cannot be switched off (gpt-oss)."""
+    return bool(_EFFORT_LEVELS.search(model or ""))
+
+
+def _start_cancel_watch(response: httpx.Response, cancel: threading.Event | None) -> threading.Event | None:
+    """When `cancel` is set, shut the socket down and close `response` (that also ends a long prompt evaluation on the server).
+    Returns the event that stops the watcher (set it when the response is done), or None without `cancel`."""
+    if cancel is None:
+        return None
+    done = threading.Event()
+
+    def _watch() -> None:
+        while not done.wait(0.2):
+            if cancel.is_set():
+                with contextlib.suppress(Exception):      # shutdown wakes the reader blocked in recv and tells the server
+                    sock = response.extensions["network_stream"].get_extra_info("socket")
+                    sock.shutdown(socket.SHUT_RDWR)
+                with contextlib.suppress(Exception):
+                    response.close()
+                return
+
+    threading.Thread(target=_watch, name="chat-cancel", daemon=True).start()
+    return done
+
+
+def _accepts(fn: Callable[..., Any], name: str) -> bool:
+    """Does `fn` take a keyword argument `name` (explicitly or through **kwargs)? Test doubles often have small signatures."""
+    import inspect
+
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
+def utility_chat(client: Any, messages: list[dict[str, Any]], model: str, *, json_mode: bool = False,
+                 cancel: threading.Event | None = None, num_predict: int | None = None,
+                 temperature: float | None = None) -> tuple[str, str]:
+    """One helper call (memory facts, summaries, plans, search rewrites, checks): always a BACKGROUND call - it never reloads the
+    chat model elsewhere (protected models keep their window and never get num_gpu 0), thinks briefly, can be cancelled, and
+    says why it stopped. Returns (text, done_reason); done_reason "length" means the output cap cut it off. Raises like
+    client.chat (GenerationAborted when `cancel` stopped it)."""
+    fn = client.chat
+    usage: dict[str, Any] = {}
+    kwargs: dict[str, Any] = {"messages": messages, "model": model, "stream": False, "background": True}
+    if _accepts(fn, "usage"):
+        kwargs["usage"] = usage
+    if json_mode and _accepts(fn, "json_mode"):
+        kwargs["json_mode"] = True
+    if cancel is not None and _accepts(fn, "cancel"):
+        kwargs["cancel"] = cancel
+    if num_predict and _accepts(fn, "extra_options"):
+        kwargs["extra_options"] = {"num_predict": int(num_predict)}
+    if temperature is not None and _accepts(fn, "temperature"):
+        kwargs["temperature"] = temperature
+    text = "".join(fn(**kwargs))
+    return text, str(usage.get("done_reason") or "")
 
 
 def supports_think_off(model: str) -> bool:
@@ -531,6 +655,7 @@ class OllamaClient:
         self._transport = transport
         self._timeout = timeout
         self._vk_client: httpx.Client | None = None
+        self._ps_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
         self._vulkan_ok: bool | None = None  # None = not tried yet
         self._vulkan_used = False  # this process has put a model on the Vulkan server
 
@@ -614,6 +739,49 @@ class OllamaClient:
                     if m.get("name") and m.get("size_vram", 0) > 0]
         except (httpx.HTTPError, ValueError, KeyError, TypeError):
             return []
+
+    def _ps(self, model: str, max_age: float = 5.0) -> list[dict[str, Any]] | None:
+        """/api/ps of the server that serves `model` (never starts one), cached `max_age` seconds; None when it does not answer."""
+        vk_ok, vk_client = getattr(self, "_vulkan_ok", None), getattr(self, "_vk_client", None)
+        vk = wants_vulkan(model) and vk_ok is not False
+        if vk and not (vk_ok or vk_client is not None):
+            return None
+        client = self._vulkan() if vk else getattr(self, "_client", None)
+        if client is None:
+            return None
+        if not hasattr(self, "_ps_cache"):
+            self._ps_cache = {}
+        key = str(client.base_url)
+        hit = self._ps_cache.get(key)
+        now = time.monotonic()
+        if hit and now - hit[0] < max_age:
+            return hit[1]
+        try:
+            response = client.get("/api/ps", timeout=2.0)
+            response.raise_for_status()
+            models = [m for m in response.json().get("models", []) if isinstance(m, dict)]
+        except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+            return None
+        self._ps_cache[key] = (now, models)
+        return models
+
+    def _vram_taken_by_other(self, model: str) -> bool:
+        """True only when the server shows ANOTHER model holding VRAM and `model` is not loaded there: then a background helper
+        runs on the CPU instead of evicting it. Unknown (the server did not answer) is False - never push a model onto the CPU on
+        a guess."""
+        models = self._ps(model)
+        if not models:
+            return False
+        if any(m.get("name") == model or m.get("model") == model for m in models):
+            return False
+        return any(int(m.get("size_vram") or 0) > 0 for m in models)
+
+    def placement(self, model: str) -> dict[str, int] | None:
+        """{"size": bytes, "size_vram": bytes} of `model` as its server reports it right now (None: not loaded / no answer)."""
+        for m in self._ps(model, max_age=0.0) or []:
+            if m.get("name") == model or m.get("model") == model:
+                return {"size": int(m.get("size") or 0), "size_vram": int(m.get("size_vram") or 0)}
+        return None
 
     @staticmethod
     def _unload_on(client: httpx.Client, model: str) -> bool:
@@ -826,12 +994,17 @@ class OllamaClient:
         empty-prompt /api/generate call is Ollama's documented way to do
         this - it loads the model and returns immediately without running
         any actual inference. True if Ollama accepted it."""
+        ctx = protected_ctx(model) or _last_num_ctx.get(model)
+        mark_foreground(model, ctx)                  # whatever runs next in the background must not reload it elsewhere
+        options = dict(speculative_options(model))   # the same load options a chat turn sends: no reload at the first message
+        if ctx:
+            options["num_ctx"] = ctx
         try:
             response = self._client_for(model).post(
-                "/api/generate", json={"model": model, "prompt": "", "keep_alive": KEEP_ALIVE,
-                                      **({"options": {"num_ctx": _last_num_ctx[model]}} if model in _last_num_ctx else {})}
+                "/api/generate", json={"model": model, "prompt": "", "keep_alive": KEEP_ALIVE, **({"options": options} if options else {})}
             )
             response.raise_for_status()
+            getattr(self, "_ps_cache", {}).clear()
             return True
         except httpx.HTTPError:
             return False
@@ -845,9 +1018,10 @@ class OllamaClient:
         num_gpu: int | None = None,
         temperature: float | None = None,
         extra_options: dict[str, Any] | None = None,
-        usage: dict[str, int] | None = None,
+        usage: dict[str, Any] | None = None,
         background: bool = False,
         json_mode: bool = False,
+        cancel: threading.Event | None = None,
     ) -> Iterator[str]:
         """Send a chat request and yield assistant content tokens as they arrive.
 
@@ -883,17 +1057,25 @@ class OllamaClient:
             payload["format"] = "json"
         options = dict(speculative_options(model))
         if background:
-            num_ctx = num_ctx or _last_num_ctx.get(model)
             options["num_predict"] = BACKGROUND_NUM_PREDICT
             if supports_think_off(model):
                 payload["think"] = False
-            elif (num_gpu is None and wants_vulkan(model) and model not in _foreground_models
-                  and os.environ.get("AGENT_BG_CPU", "1") != "0"):
-                num_gpu = 0
-        else:
-            _foreground_models.add(model)
+            elif uses_effort_levels(model):
+                payload["think"] = "low"            # gpt-oss cannot switch thinking off: a short pass leaves room for the answer
+                options["num_predict"] = BACKGROUND_NUM_PREDICT_EFFORT
+            if is_protected(model):
+                # the model the user works with: its own window (no reload), wherever it already runs (never num_gpu)
+                num_ctx = protected_ctx(model) or _last_num_ctx.get(model) or num_ctx
+                num_gpu = None if num_gpu == 0 else num_gpu
+            else:
+                num_ctx = num_ctx or _last_num_ctx.get(model)
+                if (num_gpu is None and not supports_think_off(model) and wants_vulkan(model)
+                        and os.environ.get("AGENT_BG_CPU", "1") != "0" and self._vram_taken_by_other(model)):
+                    num_gpu = 0                 # another model holds the GPUs: run this helper on the CPU instead of evicting it
         num_ctx = cap_ctx(model, num_ctx)
-        _remember_ctx(model, num_ctx)
+        if not background:
+            _remember_ctx(model, num_ctx)
+            mark_foreground(model, num_ctx)
         if num_ctx:
             options["num_ctx"] = num_ctx
         if num_gpu is not None:
@@ -907,41 +1089,46 @@ class OllamaClient:
 
         with self._client_for(model).stream("POST", "/api/chat", json=payload) as response:
             response.raise_for_status()
-            if is_deepseek_r1(model):
-                # Buffer the full response so the complete <think>…</think> block
-                # can be logged and stripped before any content reaches the caller.
-                # True per-token streaming would require a state machine and still
-                # couldn't log the full think block; the trade-off is acceptable
-                # because R1's reasoning pass is internal, not UI output.
-                full_content: list[str] = []
-                for line in response.iter_lines():
-                    if not line:
-                        continue
-                    chunk = json.loads(line)
-                    content = chunk.get("message", {}).get("content", "")
-                    if content:
-                        full_content.append(content)
-                    if chunk.get("done"):
-                        if usage is not None:
-                            usage["prompt_eval_count"] = chunk.get("prompt_eval_count", 0)
-                            usage["eval_count"] = chunk.get("eval_count", 0)
-                        break
-                assembled = "".join(full_content)
-                _log_think_block(model, assembled)
-                yield strip_thinking(assembled)
-            else:
-                for line in response.iter_lines():
-                    if not line:
-                        continue
-                    chunk = json.loads(line)
-                    content = chunk.get("message", {}).get("content", "")
-                    if content:
-                        yield content
-                    if chunk.get("done"):
-                        if usage is not None:
-                            usage["prompt_eval_count"] = chunk.get("prompt_eval_count", 0)
-                            usage["eval_count"] = chunk.get("eval_count", 0)
-                        break
+            watch = _start_cancel_watch(response, cancel)        # `cancel` set: the connection is closed, the server stops
+            try:
+                pieces = self._content_pieces(response, usage)
+                if is_deepseek_r1(model):
+                    # Buffer the full response so the complete <think>…</think> block
+                    # can be logged and stripped before any content reaches the caller.
+                    # True per-token streaming would require a state machine and still
+                    # couldn't log the full think block; the trade-off is acceptable
+                    # because R1's reasoning pass is internal, not UI output.
+                    assembled = "".join(pieces)
+                    _log_think_block(model, assembled)
+                    yield strip_thinking(assembled)
+                else:
+                    yield from pieces
+            except (httpx.StreamClosed, httpx.ReadError, httpx.RemoteProtocolError, httpx.CloseError):
+                if cancel is not None and cancel.is_set():
+                    raise GenerationAborted("stopped") from None
+                raise
+            finally:
+                if watch is not None:
+                    watch.set()
+            if cancel is not None and cancel.is_set() and usage is not None and not usage.get("done_reason"):
+                raise GenerationAborted("stopped")
+
+    @staticmethod
+    def _content_pieces(response: httpx.Response, usage: dict[str, Any] | None) -> Iterator[str]:
+        """The content pieces of a /api/chat response (streamed or not); fills `usage` from the final chunk."""
+        for line in response.iter_lines():
+            if not line:
+                continue
+            chunk = json.loads(line)
+            content = chunk.get("message", {}).get("content", "")
+            if content:
+                yield content
+            if chunk.get("done"):
+                if usage is not None:
+                    usage["prompt_eval_count"] = chunk.get("prompt_eval_count", 0)
+                    usage["eval_count"] = chunk.get("eval_count", 0)
+                    usage["done_reason"] = chunk.get("done_reason", "") or "stop"
+                break
 
     def chat_with_tools(
         self,
@@ -1041,7 +1228,7 @@ class OllamaClient:
         if cap:
             options["num_predict"] = cap
         _remember_ctx(model, num_ctx)
-        _foreground_models.add(model)
+        mark_foreground(model, num_ctx)
         if num_ctx:
             options["num_ctx"] = num_ctx
         if extra_options:
@@ -1139,7 +1326,7 @@ class OllamaClient:
         if cap:
             options["num_predict"] = cap
         _remember_ctx(model, num_ctx)
-        _foreground_models.add(model)
+        mark_foreground(model, num_ctx)
         if num_ctx:
             options["num_ctx"] = num_ctx
         if extra_options:
@@ -1188,12 +1375,7 @@ class OllamaClient:
         missing Ollama server as "not loaded" without a crash.
         """
         def same(name: str) -> bool:
-            # a running "x:latest" (or bare "x") may be any size, so it matches "x:<tag>"; two EXPLICIT tags must be equal
-            # ("gpt-oss:20b" is not "gpt-oss:120b")
-            if name == model_name:
-                return True
-            (b1, _, t1), (b2, _, t2) = name.partition(":"), model_name.partition(":")
-            return b1 == b2 and (t1 in ("", "latest") or t2 in ("", "latest"))
+            return same_model(name, model_name)
 
         for server in self._servers():
             try:
