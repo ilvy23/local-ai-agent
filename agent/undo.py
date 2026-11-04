@@ -18,7 +18,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from agent import osport
+from agent import osport, textfile
 from typing import Any
 
 MAX_TURNS = 10
@@ -80,7 +80,7 @@ class UndoStack:
         self._turns: list[dict[str, Any]] = []
         self._limit = limit
 
-    def push(self, files: dict[str, tuple[str | None, str]], checkpoint: str | None = None) -> None:
+    def push(self, files: dict[str, tuple[str | None, str | None]], checkpoint: str | None = None) -> None:
         if files:
             self._turns.append({"files": dict(files), "checkpoint": checkpoint, "time": time.strftime("%H:%M")})
             del self._turns[:-self._limit]
@@ -106,18 +106,25 @@ class UndoStack:
         out = []
         for path, (before, after) in turn["files"].items():
             p = Path(path).expanduser()
-            current = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else None
+            try:
+                # the exact text, line endings included (read_text() turned CRLF into LF, so a CRLF file never compared equal)
+                current = textfile.read(p)[0] if p.is_file() else None
+            except OSError:
+                current = None
             if current != after:
                 out.append(f"skipped {p.name}: it was changed after the agent's edit")
                 continue
             try:
                 if before is None:
-                    moved = trash(p)
+                    trash(p)
                     out.append(f"removed {p.name} (new file, moved to trash)")
-                    del moved
+                elif after is None:
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    textfile.write_atomic(p, before)
+                    out.append(f"restored {p.name} (it had been deleted)")
                 else:
-                    p.write_text(before, encoding="utf-8")
+                    textfile.write_atomic(p, before)           # in the encoding the file has
                     out.append(f"restored {p.name}")
-            except OSError as exc:
+            except (OSError, ValueError) as exc:
                 out.append(f"could not undo {p.name}: {exc}")
         return out or ["nothing changed"]

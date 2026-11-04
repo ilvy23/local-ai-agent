@@ -28,7 +28,10 @@ def read_text(path: str | os.PathLike[str]) -> str | None:
         p = Path(path).expanduser()
         if not p.is_file() or p.stat().st_size > _MAX_READ_BYTES:
             return None
-        return p.read_text(encoding="utf-8", errors="replace")
+        from agent import textfile
+
+        raw = p.read_bytes()
+        return None if textfile.looks_binary(raw) else textfile.decode(raw)[0]      # lossless for Latin-1 / cp1252 files too
     except OSError:
         return None
 
@@ -87,12 +90,17 @@ class FileChangeLog:
         self.checkpoint, self.checkpoint_tried = None, False
 
     def changed(self) -> dict[str, tuple[str | None, str]]:
-        """Files whose content really changed this turn: path -> (before, after)."""
+        """Files whose content really changed this turn and that still exist: path -> (before, after). Deletions: undo_items()."""
         return {p: v for p, v in self._files.items() if v[1] is not None and v[0] != v[1]}
 
+    def undo_items(self) -> dict[str, tuple[str | None, str | None]]:
+        """Everything this turn changed, deletions included (after = None): what /undo has to put back. A move is a deletion of
+        the old path plus a new file at the new one, so undoing it restores the original and takes the copy away."""
+        return {p: v for p, v in self._files.items() if v[0] != v[1]}
+
     def record(self, path: str, before: str | None, after: str | None) -> None:
-        """Note one write. `before` is the content just before it (None = file did not exist)."""
-        if after is None:
+        """Note one write. `before` is the content just before it (None = file did not exist); `after` None = it was deleted."""
+        if path not in self._files and before is None and after is None:
             return
         first = self._files[path][0] if path in self._files else before
         self._files[path] = (first, after)
@@ -101,7 +109,10 @@ class FileChangeLog:
         """(path, added, removed, created) for every file whose content really changed."""
         rows = []
         for path, (before, after) in self._files.items():
-            if before is not None and before == after:
+            if before == after:
+                continue
+            if after is None:                                   # deleted (or moved away): every line removed
+                rows.append((path, 0, len(before.splitlines()) if before else 0, False))
                 continue
             added, removed = line_stats(before, after)
             rows.append((path, added, removed, before is None))

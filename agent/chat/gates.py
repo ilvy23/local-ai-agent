@@ -275,7 +275,7 @@ class ChangeTracker:
     def finish(self) -> dict[str, tuple[str | None, str]]:
         """End of the prompt: push the edits onto the undo stack and remember which files were touched."""
         changed = self.log.changed()
-        self.undo.push(changed, self.log.checkpoint)
+        self.undo.push(self.log.undo_items(), self.log.checkpoint)          # deletions and moves too
         self.last_edited[:] = list(changed)
         return changed
 

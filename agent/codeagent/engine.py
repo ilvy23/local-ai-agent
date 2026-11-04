@@ -658,7 +658,7 @@ class CodeEngine:
             self.live.resume()
             self._set_now("idle")
             changed = self.tools.changes.changed()
-            self.undo.push(changed, self.tools.changes.checkpoint)
+            self.undo.push(self.tools.changes.undo_items(), self.tools.changes.checkpoint)      # deletions and moves too
             result.files = [self.tools.rel(Path(p)) for p in changed]
             self.tools.changes.print_summary(self.console, self.root)
         return result

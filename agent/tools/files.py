@@ -322,11 +322,17 @@ def write_file(path: str, content: str, append: bool = False, **_kwargs: Any) ->
     data_dir = Path(DEFAULT_DATA_DIR).expanduser().resolve()
     if p == data_dir or data_dir in p.parents:
         return f"Error: refusing to write under the protected data/ directory: {p}"
+    from agent import textfile
+
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
-        mode = "a" if append else "w"
-        with p.open(mode, encoding="utf-8") as f:
-            f.write(content)
+        if append and p.is_file():
+            old_text, _info = textfile.read(p)
+            textfile.write_atomic(p, old_text + content)          # the file keeps its encoding; a crash never leaves half of it
+        else:
+            textfile.write_atomic(p, content)
+    except textfile.UnencodableText as exc:
+        return f"Error writing {path}: {exc}"
     except OSError as exc:
         return f"Error writing {path}: {exc}"
     verb = "appended" if append else "wrote"
@@ -356,7 +362,9 @@ def replace_in_file(path: str, search: str, replace: str, **_kwargs: Any) -> str
         return f"Error reading {p}: {exc}"
     if _is_binary(raw):
         return f"Error: {p} appears to be a binary file."
-    text = raw.decode("utf-8", errors="replace")
+    from agent import textfile
+
+    text, info = textfile.decode(raw)                 # lossless: a Latin-1 / cp1252 file keeps every byte it does not edit
     if search not in text:
         return (
             f"Error: the given search text was not found in {p} verbatim. "
@@ -365,7 +373,9 @@ def replace_in_file(path: str, search: str, replace: str, **_kwargs: Any) -> str
         )
     new_text = text.replace(search, replace, 1)
     try:
-        p.write_text(new_text, encoding="utf-8")
+        textfile.write_atomic(p, new_text, info)
+    except textfile.UnencodableText as exc:
+        return f"Error writing {p}: {exc}"
     except OSError as exc:
         return f"Error writing {p}: {exc}"
     return f"Replaced 1 occurrence in {p} ({len(new_text)} chars now)."

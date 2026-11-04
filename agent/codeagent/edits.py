@@ -430,26 +430,46 @@ def _anchor_blocks(src_lines: list[str], search_lines: list[str]) -> list[tuple[
     return found
 
 
+def _lead(line: str) -> str:
+    return line[:len(line) - len(line.lstrip(" \t"))]
+
+
+def _first_lead(text: str) -> str:
+    for line in text.splitlines():
+        if line.strip():
+            return _lead(line)
+    return ""
+
+
+def _map_lead(line: str, model_ref: str, file_ref: str) -> str:
+    """Re-indent one line the model wrote: its indentation was relative to `model_ref` (the model's version of a matched line),
+    the file has `file_ref` there. Indentation is compared as TEXT, so tabs survive: a model that wrote 4 spaces per level for a
+    tab-indented file (Go, Makefiles) gets tabs back instead of a mangled mix."""
+    if not line.strip() or model_ref == file_ref:
+        return line
+    lead, body = _lead(line), line[len(_lead(line)):]
+    tabs_for_spaces = bool(file_ref) and set(file_ref) == {"\t"} and model_ref and set(model_ref) == {" "}
+    spaces_for_tabs = bool(model_ref) and set(model_ref) == {"\t"} and file_ref and set(file_ref) == {" "}
+    if tabs_for_spaces and len(model_ref) % len(file_ref) == 0 and set(lead) <= {" "}:
+        unit = len(model_ref) // len(file_ref)                  # model spaces per file tab
+        return "\t" * (len(lead) // unit) + " " * (len(lead) % unit) + body
+    if spaces_for_tabs and len(file_ref) % len(model_ref) == 0 and set(lead) <= {"\t"}:
+        unit = len(file_ref) // len(model_ref)                  # file spaces per model tab
+        return " " * (len(lead) * unit) + body
+    if lead.startswith(model_ref):
+        return file_ref + line[len(model_ref):]
+    if set(lead + model_ref + file_ref) <= {" "}:              # spaces only, less indented than the reference: shift by the difference
+        delta = len(file_ref) - len(model_ref)
+        return (" " * delta + line) if delta > 0 else line[min(-delta, len(lead)):]
+    return line
+
+
 def _reindent(replace: str, search: str, src_block: str) -> str:
-    """Shift `replace` so its indentation matches the file when the model's search block was indented differently."""
-    def lead(s: str) -> int:
-        for line in s.splitlines():
-            if line.strip():
-                return len(line) - len(line.lstrip())
-        return 0
-    delta = lead(src_block) - lead(search)
-    if delta == 0:
+    """Shift `replace` so its indentation matches the file when the model's search block was indented differently (tab-aware)."""
+    model_ref, file_ref = _first_lead(search), _first_lead(src_block)
+    if model_ref == file_ref:
         return replace
-    out = []
-    for line in replace.splitlines(keepends=True):
-        if not line.strip():
-            out.append(line)
-        elif delta > 0:
-            out.append(" " * delta + line)
-        else:
-            cut = min(-delta, len(line) - len(line.lstrip()))
-            out.append(line[cut:])
-    return "".join(out)
+    return "".join(_map_lead(line, model_ref, file_ref) for line in replace.splitlines(keepends=True))
 
 
 def _lines_of(src: str, starts: list[int]) -> str:
@@ -634,26 +654,94 @@ def parse_patch(patch: str, default_path: str | None = None) -> list[tuple[str, 
     return [(p_, h) for p_, h in files if h]
 
 
+def _find_block(src_lines: list[str], want: list[str], norm: Any = None) -> list[int]:
+    """Start indexes where `want` matches `src_lines` line by line - EVERY line, blank ones included (unlike _find_lines, which
+    trims blank edge lines and so cannot tell how many lines it matched)."""
+    n = len(want)
+    if not n or n > len(src_lines):
+        return []
+    f = norm or (lambda x: x)
+    w = [f(x) for x in want]
+    have = [f(x) for x in src_lines]
+    return [i for i in range(len(have) - n + 1) if have[i:i + n] == w]
+
+
+def _merge_hunk(block: list[str], hunk: list[str]) -> list[str]:
+    """The new lines for a block matched line by line: context lines keep the FILE's own text (they are unchanged by definition, and
+    the match may have ignored whitespace), removed lines go, added lines come in re-indented against the nearest matched line."""
+    pairs: list[tuple[int, str, str]] = []          # (position in hunk, file line, model line) of every context / removed line
+    k = 0
+    for pos, ln in enumerate(hunk):
+        if ln[:1] in (" ", "-"):
+            pairs.append((pos, block[k], ln[1:]))
+            k += 1
+    out: list[str] = []
+    k = 0
+    for pos, ln in enumerate(hunk):
+        tag, body = ln[:1], ln[1:]
+        if tag == " ":
+            out.append(block[k])
+            k += 1
+        elif tag == "-":
+            k += 1
+        elif tag == "+":
+            ref = next((p for p in reversed(pairs) if p[0] < pos and p[1].strip()), None) or next((p for p in pairs if p[1].strip()), None)
+            out.append(_map_lead(body, _lead(ref[2]), _lead(ref[1])) if ref else body)
+    return out
+
+
+def _edge_blank_context(hunk: list[str]) -> list[str]:
+    """Drop blank CONTEXT lines at both ends of a hunk: they carry no position, and a patch that simply ends with a newline gets one
+    (parse_patch turns the final empty line into a blank context line). Done on the hunk, so the old and new side stay aligned."""
+    h = list(hunk)
+    while h and h[0][:1] == " " and not h[0][1:].strip():
+        h.pop(0)
+    while h and h[-1][:1] == " " and not h[-1][1:].strip():
+        h.pop()
+    return h
+
+
 def apply_hunks(src: str, hunks: list[list[str]]) -> EditResult:
-    """Apply hunks by content (line numbers in model-written diffs are unreliable)."""
+    """Apply hunks by content (line numbers in model-written diffs are unreliable). Each hunk is found like an edit_file search -
+    exact lines, then ignoring whitespace, then typographic variants, then by its first and last line - and exactly the matched
+    lines are replaced. A hunk that matches several places, or none, is refused with the reason (and the file's real lines)."""
     lines = src.splitlines()
     ends_nl = src.endswith("\n") or not src
-    for n, hunk in enumerate(hunks, 1):
+    hows: list[str] = []
+    for n, raw_hunk in enumerate(hunks, 1):
+        hunk = _edge_blank_context(raw_hunk)
         old = [ln[1:] for ln in hunk if ln[:1] in (" ", "-")]
         new = [ln[1:] for ln in hunk if ln[:1] in (" ", "+")]
         if not old:
             lines.extend(new)                      # pure addition with no context: append
             continue
-        hits = _find_lines(lines, old)
-        if not hits:
-            return EditResult(None, error=f"hunk {n}: the context/removed lines were not found in the file")
-        if len(hits) > 1:
-            return EditResult(None, error=f"hunk {n}: matches {len(hits)} places - include more context lines")
-        i = hits[0]
-        # keep the file's own indentation for lines that only differ in whitespace
-        lines[i:i + len([x for x in old])] = new
+        at, how = None, ""
+        for norm, label in ((None, ""), (_norm, "whitespace-tolerant"), (_typo_norm, HOW_TYPO)):
+            hits = _find_block(lines, old, norm)
+            if len(hits) > 1:
+                where = ", ".join(str(i + 1) for i in hits[:6])
+                return EditResult(None, error=f"hunk {n}: matches {len(hits)} places (lines {where}) - include more context lines")
+            if hits:
+                at, how = hits[0], label
+                break
+        if at is not None:
+            lines[at:at + len(old)] = _merge_hunk(lines[at:at + len(old)], hunk)
+        else:
+            blocks = _anchor_blocks(lines, old)
+            if len(blocks) > 1:
+                where = ", ".join(str(i + 1) for i, _j, _r in blocks[:6])
+                return EditResult(None, error=f"hunk {n}: its first and last line match {len(blocks)} places (lines {where}) - include more context lines")
+            if not blocks:
+                return EditResult(None, error=f"hunk {n}: the context/removed lines were not found in the file. "
+                                              + _not_found_hint("\n".join(lines), "\n".join(old)))
+            i, j, ratio = blocks[0]
+            rep = _reindent("\n".join(new), "\n".join(old), "\n".join(lines[i:j]))
+            lines[i:j] = rep.split("\n") if new else []
+            how = f"{HOW_ANCHOR} (similarity {ratio:.2f})"
+        if how:
+            hows.append(f"hunk {n} {how}")
     out = "\n".join(lines)
-    return EditResult(out + ("\n" if ends_nl and out else ""), "patch")
+    return EditResult(out + ("\n" if ends_nl and out else ""), "patch" + (f" ({'; '.join(hows)})" if hows else ""))
 
 
 # ── outlines and repo map ───────────────────────────────────────────────────

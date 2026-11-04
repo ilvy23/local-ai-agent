@@ -33,7 +33,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from agent import changes, osport
+from agent import changes, osport, textfile
 from agent.codeagent import edits, outputs, profile as profile_mod, spill as spill_mod, static, symbols, tuihint, tuismoke, xref
 from agent.codeagent.context import MARKERS, ContextManager, FileEntry, new_markers
 from agent.codeagent.lookact import FILTER_CMDS, is_scratch_path, readonly_shell
@@ -213,21 +213,9 @@ def _uses_crlf(text: str) -> bool:
 
 def atomic_write(p: Path, text: str) -> None:
     """Write via a temp file in the same folder + rename: a Ctrl-C, a full disk or a crash leaves the old file or the new
-    one, never half of it. Keeps the old file's mode."""
-    mode = stat.S_IMODE(p.stat().st_mode) if p.exists() else None
-    fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=f".{p.name}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
-            f.write(text)
-            f.flush()
-            os.fsync(f.fileno())
-        if mode is not None:
-            os.chmod(tmp, mode)
-        os.replace(tmp, p)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
+    one, never half of it. Keeps the old file's mode AND its encoding (agent.textfile): an edit of a cp1252 file stays cp1252, and
+    text that encoding cannot store is refused (textfile.UnencodableText) before anything is written."""
+    textfile.write_atomic(p, text)
 
 
 def _kill_group(proc: subprocess.Popen) -> None:
@@ -332,6 +320,7 @@ class CodeTools:
         self.last_edit_step = 0
         self.read_lines = 0                             # lines returned by reads since the last write/run (volume nudge)
         self.read_counts: dict[str, int] = {}           # read_file calls per relative path, whole run (stages.py: which files a stage keeps re-reading)
+        self.encodings: dict[str, str] = {}             # absolute path -> non-UTF-8 encoding a read found (named in read_file's header)
         self.last_cpu = 0.0                             # CPU seconds of the last command (sleep detection)
         self._tiny_appends: dict[str, int] = {}         # path -> consecutive tiny appends
         self._write_log: list[tuple[int, str]] = []     # (step, path) of recent whole-file writes
@@ -357,9 +346,14 @@ class CodeTools:
         if p.is_dir():
             return None, f"error: {self.rel(p)} is a directory (use list_dir)"
         raw = p.read_bytes()
-        if b"\0" in raw[:4096]:
+        if textfile.looks_binary(raw):
             return None, f"{self.rel(p)} is a binary file ({len(raw)} bytes)"
-        return raw.decode("utf-8", errors="replace"), ""
+        text, info = textfile.decode(raw)              # Latin-1 / cp1252 / UTF-16 files decode losslessly; writes keep the encoding
+        if info.label:
+            self.encodings[str(p)] = info.label
+        else:
+            self.encodings.pop(str(p), None)
+        return text, ""
 
     # ── reads ───────────────────────────────────────────────────────────
     def read_file(self, path: str, start: Any = None, end: Any = None, outline: bool = False, **_: Any) -> str:
@@ -371,7 +365,7 @@ class CodeTools:
         crlf = _uses_crlf(text)
         if crlf:
             text = text.replace("\r\n", "\n")              # shown with plain newlines; edits keep the file's CRLF
-        lines = text.splitlines()
+        lines = symbols.split_lines(text)                  # numbered exactly like replace_lines counts (newline only)
         total = len(lines)
         try:
             s = int(start) if start not in (None, "") else None
@@ -387,7 +381,9 @@ class CodeTools:
             return (f"{self.rel(p)} is unchanged since step {hit[2]} ({total} lines) - its content is already in your context above. "
                     "Read a different line range, or search for what you need.")
         self.read_cache.pop(key, None)
-        header = f"{self.rel(p)}  ({total} lines, {len(text)} chars{', CRLF line endings' if crlf else ''})"
+        enc = self.encodings.get(str(p), "")
+        header = (f"{self.rel(p)}  ({total} lines, {len(text)} chars{', CRLF line endings' if crlf else ''}"
+                  f"{f', stored as {enc} (edits keep it)' if enc else ''})")
         self.line_views[self.rel(p)] = symbols.file_hash(text)      # every answer below shows line numbers (range, outline) or the whole text
         if outline:
             body = "\n".join(edits.outline(str(p), text)) or "(no top-level definitions found)"

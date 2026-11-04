@@ -43,6 +43,16 @@ def shifted_starts(lines: list[str], want: str, count: int, near: int, window: i
     return [i for i in range(lo, hi + 1) if range_hash(lines[i - 1:i - 1 + count]) == want]
 
 
+def split_lines(text: str) -> list[str]:
+    """The lines of `text`, split ONLY at newline - the way replace_lines counts and Python numbers lines. str.splitlines() also
+    breaks at form feeds, \\x1c-\\x1e, \\x85 and U+2028/9, so a file holding one showed read_file / show_symbol numbers that
+    replace_lines then applied to different lines. A CRLF file's trailing \\r is dropped from each line, as before."""
+    parts = text.split("\n")
+    if parts and parts[-1] == "":
+        parts.pop()
+    return [x[:-1] if x.endswith("\r") else x for x in parts]
+
+
 def numbered(lines: list[str], first: int) -> str:
     """`  120| code` - the line number is NOT part of the code (never copy it into new_text)."""
     return "\n".join(f"{n:>5}| {ln}" for n, ln in enumerate(lines, first))
@@ -94,7 +104,7 @@ _C_DEF = (r"^()(?!\s)(?!return\b|else\b|if\b|while\b|for\b|switch\b|case\b|typed
 
 def generic_span(text: str, name: str) -> Span | None:
     """Non-Python files: the definition line, then up to the matching closing brace, or (no braces) the indented block."""
-    lines = text.splitlines()
+    lines = split_lines(text)
     pats = [re.compile(_DEF_LINE.format(name=re.escape(name))), re.compile(_C_DEF.format(name=re.escape(name)))]
     for i, ln in enumerate(lines):
         m = next((m for m in (p.match(ln) for p in pats) if m), None)
@@ -143,7 +153,7 @@ def find_symbol(path: str, text: str, name: str) -> tuple[Span | None, list[Span
 
 def show(path: str, text: str, span: Span) -> str:
     """The numbered block with its range hash (what replace_lines(expect=...) compares)."""
-    lines = text.splitlines()
+    lines = split_lines(text)
     block = lines[span.start - 1:span.end]
     h = range_hash(block)
     head = f"{path}: {span.kind} {span.name}  lines {span.start}-{span.end}  #{h}  (file {len(lines)} lines)"
