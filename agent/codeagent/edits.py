@@ -591,6 +591,13 @@ def apply_edits(src: str, edits: list[dict], replace_all: bool = False) -> EditR
 _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
+def patch_paths(patch: str, default_path: str | None = None) -> list[str]:
+    """Every file `apply_patch(patch, path=default_path)` would write - the SAME parse the tool itself uses, so the policy check
+    and the write can never disagree (a header-less patch with `path=~/.ssh/authorized_keys` writes that file, not ".")."""
+    paths = [p for p, _ in parse_patch(patch or "", default_path)]
+    return paths or [default_path or "."]
+
+
 def parse_patch(patch: str, default_path: str | None = None) -> list[tuple[str, list[list[str]]]]:
     """[(path, hunks)] where a hunk is a list of diff lines (' ', '-', '+' prefixed). Accepts what local models actually send:
     a proper unified diff (`--- a/x` / `+++ b/x`), `diff --git` headers, the `*** Update File: x` block style, and hunks with

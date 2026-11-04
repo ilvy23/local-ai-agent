@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import functools
 import os
 import re
 import shlex
@@ -202,8 +203,41 @@ def _home() -> str:
     return os.path.realpath(str(Path.home()))
 
 
+def _norm_sep(x: str) -> str:
+    """On Windows paths compare case-insensitively and with either separator; elsewhere a backslash is just a character."""
+    return os.path.normcase(x).replace("\\", "/") if os.sep == "\\" else x
+
+
 def _under(p: str, base: str) -> bool:
+    p, base = _norm_sep(p), _norm_sep(base)
     return p == base or p.startswith(base.rstrip("/") + "/")
+
+
+# Folders that hold the home folders of the users of a machine: /home (Linux), /Users (macOS), /var/home (Fedora Atomic / Silverblue),
+# /usr/home (FreeBSD), /export/home (Solaris), /root (the root account). Everything in them except the user's own home is another
+# person's private data.
+_HOME_BASES = ("/home", "/Users", "/var/home", "/usr/home", "/export/home", "/root")
+
+
+@functools.lru_cache(maxsize=1)
+def _own_runtime() -> tuple[str, ...]:
+    """The interpreter environment nightage itself runs in (its venv / prefix). Running it - the verification uses `sys.executable` -
+    is never a look into another person's files, even when it lives in another user's home (root using a checkout in /home/x)."""
+    seen = []
+    for d in (sys.prefix, sys.base_prefix, os.path.dirname(sys.executable or "")):
+        if d:
+            r = os.path.realpath(d)
+            if r not in ("/", "") and r not in seen:
+                seen.append(r)
+    return tuple(seen)
+
+
+def _other_homes(home: str) -> list[str]:
+    bases = list(_HOME_BASES)
+    parent = os.path.dirname(home.rstrip("/"))
+    if parent and parent not in ("/", "") and parent not in bases and parent.count("/") >= 2:
+        bases.append(parent)                     # homes in an unusual place (/data/homes/bob): its siblings are other users' too
+    return bases
 
 
 def _clean_paths(value: Any) -> list[str]:
@@ -257,8 +291,8 @@ def _private(p: str, home: str, rootp: str) -> bool:
         return any(_under(rel, d) for d in _HOME_DENY)
     if any(_under(p, d) for d in _SYS_DENY) or p.startswith(_SYS_PREFIX):
         return True
-    if os.path.dirname(home) == "/home":                               # other users' homes
-        return p == "/home" or _under(p, "/home")
+    if any(_under(p, base) for base in _other_homes(home)):          # other users' homes (own home was handled above) ...
+        return not any(_under(p, own) for own in _own_runtime())     # ... except the Python environment this agent runs in
     return False
 
 
@@ -635,7 +669,12 @@ def check_command(pol: RepoPolicy, root: Path, command: str, risk_name: str, own
     if NETWORK_RE.search(command) and not pol.network and not _matches(command, pol.allow):
         return Decision("ask", "uses the network (set network=true or /allow it)")
     if risk_name == "SAFE":
-        return Decision("allow")
+        # A read-only command is free inside the repo; reading elsewhere asks, in every mode (an allow pattern / allow_paths count).
+        from agent import repoaccess
+
+        if repoaccess._shell_in_scope(command, root, cwd=root) or _scope_with_allow(command, root) or _matches(command, pol.allow):
+            return Decision("allow")
+        return Decision("ask", "reads outside the repo")
     if _matches(command, pol.allow):
         return Decision("allow", "matches your allow list")
     if pol.mode == AUTO:

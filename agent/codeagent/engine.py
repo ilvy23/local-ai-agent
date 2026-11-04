@@ -205,6 +205,7 @@ class CodeEngine:
         self._in_place_failures = 0
         self.watcher = autonomy.StuckWatcher(max_lookups=int((config.get("autonomy") or {}).get("max_lookups_per_turn", 3)))
         self.think_steps = 0
+        self.verify_not_run: list[str] = []               # checks _verify could not run (blocked / declined / not installed)
         self.on_step: Any = None                   # session.py hooks the autosave in here (a killed run keeps its conversation)
         self.live = LiveControl()                  # live-UI control state (livectl.py): steer queue, pause / stop / compact requests, extra step hooks, "now"
         self.capture_thinking = False              # forward the model's reasoning text to subscribers (emit_live "thinking"); never persisted
@@ -495,7 +496,7 @@ class CodeEngine:
             return worst
         if kind == WRITE:
             if name == "apply_patch":
-                paths = [f[0] for f in edits.parse_patch(str(args.get("patch", "")))] or ["."]
+                paths = edits.patch_paths(str(args.get("patch", "")), str(args["path"]) if args.get("path") else None)
             elif name == "move_file":
                 paths = [str(args.get("src", ".")), str(args.get("dst", "."))]
             else:
@@ -1714,6 +1715,11 @@ class CodeEngine:
                 result.verified = False
                 return outcome
             result.verified = bool(t.evidence) and all(code == 0 for _s, _c, code in t.evidence)
+            if self.verify_not_run:                         # a blocked / declined / missing check proves nothing
+                result.verified = False
+                note = "checks not run: " + "; ".join(self.verify_not_run[:3])
+                if note not in result.not_verified:
+                    result.not_verified.append(note)
         self._duplicate_unverified(result)                  # the static nudges are spent: a dead duplicate is not hidden behind a green test run
         crashed = self._tui_gate(nudges, result)
         if crashed is not None:
@@ -1992,6 +1998,7 @@ class CodeEngine:
     def _verify(self) -> str | None:
         """Run the project's checks. Returns a failure message for the model, or None when everything passed
         (or there is nothing to run)."""
+        self.verify_not_run = []
         cmds = self.tools.check_command_list()
         if not cmds:
             return None
@@ -2002,17 +2009,24 @@ class CodeEngine:
             level = classify_command(cmd, self.config)
             verdict = policy_mod.check_command(self.pol, self.root, cmd, level.name, owned=self.tools.owned)
             if verdict.verdict == "block":
+                self.verify_not_run.append(f"{_one_line(cmd, 60)} (blocked: {verdict.reason or 'policy'})")
                 continue
             if verdict.verdict == "ask" and not self._approve(f"run  {_one_line(cmd, 100)}", "verification"):
                 self.console.print("    [dim]skipped[/dim]")
-                return None
+                return None                     # declined (or no terminal): the user's call; nothing is recorded as verified either
             code, out, secs = self.tools._exec(cmd, 300)
             self.ctx.ledger.note_run(self.ctx.step, cmd, code, out.strip().splitlines()[-1] if out.strip() else "")
+            if code == 127:                                             # the check's program is not installed: not a failure of the code
+                self.console.print(f"    [yellow]not run: command not found ({secs:.1f}s)[/yellow]")
+                self.verify_not_run.append(f"{_one_line(cmd, 60)} (command not found)")
+                continue
             self.tools.evidence.append((self.ctx.step, cmd, code))
             if code != 0:
                 self.console.print(f"    [red]failed ({secs:.1f}s)[/red]")
                 return verify.failure_message(cmd, f"exit code {code}\n{cap_output(out.strip(), 600, 1800)}")
             self.console.print(f"    [green]passed ({secs:.1f}s)[/green]")
+        if self.verify_not_run:
+            return None                         # nothing failed, but nothing proves it works either: the caller labels it NOT VERIFIED
         self._remember("tests", self.profile.test_cmd)
         self.tools.dirty.clear()
         return None

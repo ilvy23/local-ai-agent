@@ -174,7 +174,7 @@ def snapshot_tree(root: Path, keep_ro: bool = False, protect: tuple[str, ...] | 
                 files[e.path] = (st.st_mtime_ns, st.st_size)
                 if len(files) > SNAPSHOT_CAP:
                     return None
-                if keep_ro and not st.st_mode & stat.S_IWUSR and len(ro) < RO_MAX_FILES and st.st_size <= RO_MAX_BYTES:
+                if keep_ro and is_read_only(e.path, st) and len(ro) < RO_MAX_FILES and st.st_size <= RO_MAX_BYTES:
                     try:
                         ro[e.path] = (Path(e.path).read_bytes(), stat.S_IMODE(st.st_mode), st.st_mtime_ns)
                     except OSError:
@@ -186,6 +186,25 @@ def snapshot_tree(root: Path, keep_ro: bool = False, protect: tuple[str, ...] | 
                     except OSError:
                         pass
     return files, ro
+
+
+def is_read_only(p: Path | str, st: os.stat_result | None = None) -> bool:
+    """True for a file the user protects by its mode (a game's save file set to 0444). The owner-write bit decides - `os.access`
+    alone is always True for root (Docker, a root shell), so it would protect nothing there. A file owned by someone else that
+    this process cannot write counts as read-only too (a rename-based write would still replace it)."""
+    try:
+        st = st if st is not None else os.stat(p)
+    except OSError:
+        return False
+    if not st.st_mode & stat.S_IWUSR:
+        return True
+    getuid = getattr(os, "getuid", None)
+    if getuid is not None and st.st_uid != getuid():
+        try:
+            return not os.access(p, os.W_OK)
+        except OSError:
+            return False
+    return False
 
 
 def _uses_crlf(text: str) -> bool:
@@ -868,7 +887,7 @@ class CodeTools:
         if self._is_protected(p):
             return (f"error: {self.rel(p)} {PROTECT_MARK}, so it was NOT changed. Do not retry this; the player plays with it. "
                     "If you need a changed version or want to test, work on a copy in .scratch/.")
-        if p.exists() and not os.access(p, os.W_OK):
+        if p.exists() and not p.is_dir() and is_read_only(p):
             return (f"error: {self.rel(p)} is read-only (its file mode protects it), so it was NOT changed. Do not retry this; "
                     "if you need a changed version, work on a copy in .scratch/.")
         if p.is_dir():

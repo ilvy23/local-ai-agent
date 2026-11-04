@@ -111,7 +111,7 @@ def test_a_rename_replace_of_a_read_only_file_is_undone(tmp_path):
     eng, repo = _eng(tmp_path)
     f = _ro(repo)
     res = eng.tools.run("python3 -c \"import os;open('x.tmp','w').write('z');os.replace('x.tmp','ro.txt')\"")
-    assert f.read_text() == "precious\n" and not os.access(f, os.W_OK)
+    assert f.read_text() == "precious\n" and T.is_read_only(f)          # mode bits: also true when the tests run as root
     assert stat.S_IMODE(f.stat().st_mode) == 0o444
     assert "NOTE: this command tried to change the read-only file ro.txt; it was restored." in res
     assert "ro.txt" not in eng.ctx.ledger.files and "ro.txt" not in eng.tools.dirty
