@@ -21,10 +21,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 LOOK_TOOLS = frozenset({"read_file", "read_files", "search", "outline", "list_dir", "repo_map", "show_symbol", "where_used"})
-LOOK_BLOCK_AT = 16                 # look-steps in a row after which reading is paused until the model changes something (was 25: streaks of 54 were measured)
-FREE_STAGE_STEPS = 6               # the first steps of a stage whose reads do not count toward that streak (orientation)
-READ_VOLUME_NUDGE = 700            # lines read in a row without writing or running anything
-TEST_STREAK_NUDGE = 15             # steps in a row without editing a real project file (running and reading only)
+LOOK_BLOCK_AT = 40                 # look-steps in a row after which reading is paused until the model changes something (was 25: streaks of 54 were measured)
+FREE_STAGE_STEPS = 10               # the first steps of a stage whose reads do not count toward that streak (orientation)
+READ_VOLUME_NUDGE = 1500            # lines read in a row without writing or running anything
+TEST_STREAK_NUDGE = 30             # steps in a row without editing a real project file (running and reading only)
 WRITE_TOOLS = frozenset({"write_file", "append_file", "edit_file", "apply_patch", "delete_file", "move_file", "replace_lines", "insert_after"})
 SHELL_TOOLS = frozenset({"run", "run_tests", "lint", "git_commit", "tui_smoke"})
 NEUTRAL_ACTS = frozenset({"mark_done", "project_note", "add_check", "ask_user", "write_prose"})
@@ -363,7 +363,8 @@ class LookAct:
             hint = ""
         return (f"NOT RUN: {self.look_streak} read/search steps in a row without a change - reading is paused. What you read is in your context "
                 "and the outlines above. " + (hint + " " if hint else "") + "Make the next change now (replace_lines / insert_after need no old text and show you the current "
-                "lines if your numbers are off; or edit_file / write_file) or run a command, then you can read again.")
+                "lines if your numbers are off; or edit_file / write_file) or run a command, then you can read again. If the task is to survey or map the "
+                "project, `append_file` what you learned so far to the notes/map file the task names - that counts as a change. If the work is already complete, stop reading: call mark_done for each finished item with the evidence you already have.")
 
     def observe(self, name: str, args: dict[str, Any] | None, result: str) -> list[Reaction]:
         out: list[Reaction] = []
@@ -395,13 +396,14 @@ class LookAct:
         self.look_streak += 1
         n = self.wander_nudges + 1
         lines = self._lines()
-        if self.look_streak < 10 * n and lines < READ_VOLUME_NUDGE * n:
+        if self.look_streak < 20 * n and lines < READ_VOLUME_NUDGE * n:
             return None
         self.wander_nudges = n
         if n <= 2:
             text = (f"You have spent {self.look_streak} steps reading (about {lines} lines) without writing or "
                     "running anything. That is enough to start: write the first piece now (a new module or a first edit) or run something, "
-                    "and read more only for the exact lines you need next.")
+                    "and read more only for the exact lines you need next. If the task is to map or survey the project, append what you know so "
+                    "far to the notes/map file now (append_file), then read on.")
         else:
             text = (f"{self.look_streak} read/search steps in a row (about {lines} lines), nothing written. Stop re-reading: what you read "
                     "earlier is in the work log and the outlines above, and every extra read makes each following step slower. Pick the ONE next "
@@ -429,5 +431,4 @@ class LookAct:
         return Reaction("edit_gap", {"steps": self.edit_gap},
                         f"{self.edit_gap} steps in a row without editing any project file - you are testing and probing, not changing "
                         "anything. Decide now: what is the smallest edit that moves the task forward? Make it, then test once. If a test run "
-                        "shows something you do not understand, read the code that produces it instead of re-running with other inputs.",
-                        think=True)
+                        "shows something you do not understand, read the code that produces it instead of re-running with other inputs.")      # no forced reasoning pass: 30 s each, no evidence it helps

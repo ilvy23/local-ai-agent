@@ -164,7 +164,7 @@ def why_slow(b: Breakdown) -> list[str]:
     if b.prefill_share > PREFILL_SHARE:
         if b.mean_prompt > BIG_PROMPT:
             causes.append(f"prefill is {_pct(b.prefill_share)} of the wall time ({b.prefill_s:.0f} s) with a mean prompt of {_k(b.mean_prompt)} tokens "
-                          f"(peak {_k(b.peak_prompt)}): lower coding.stage_prompt_cap or enable stages (--stages)")
+                          f"(peak {_k(b.peak_prompt)}): enable stages (--stages) or compare coding.stage_prompt_cap with the window")
         else:
             causes.append(f"prefill is {_pct(b.prefill_share)} of the wall time ({b.prefill_s:.0f} s) although the mean prompt is only "
                           f"{_k(b.mean_prompt)} tokens: the server re-reads the prompt often (masks, compactions, a changed prompt head) - see /events")

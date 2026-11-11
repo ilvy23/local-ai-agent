@@ -93,7 +93,7 @@ def test_a_new_session_gets_a_fresh_repo_map(tmp_path):
     eng.start()
     (repo / "later.py").write_text("x = 1\n")
     session.reset_engine(eng)
-    assert any("later.py" in m["content"] for m in eng.ctx.messages if m["content"].startswith("REPO MAP"))
+    assert any("later.py" in m["content"] for m in eng.ctx.messages if m["content"].startswith(("REPO MAP", "PROJECT MAP")))      # the persistent map is refreshed at the start of the new session
 
 
 # ── the report ──────────────────────────────────────────────────────────────

@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from agent.codeagent import loopguard as LG, sessionstore as SS, session as S, supervisor as SV, verified
+from agent.codeagent import engine as E, lookact, loopguard as LG, sessionstore as SS, session as S, supervisor as SV, verified
 from agent.codeagent.eventlog import EventLog
 
 from tests.test_codeagent_engine import FakeLLM, call, say
@@ -88,7 +88,7 @@ def test_other_tools_and_distant_calls_do_not_join_a_near_match():
 
 # ── the ladder ──────────────────────────────────────────────────────────────
 
-def test_ladder_note_at_2_nudge_and_one_reasoning_pass_at_3_abort_at_4(tmp_path):
+def test_ladder_note_at_note_nudge_and_one_reasoning_pass_at_hint_abort_at_abort(tmp_path):
     eng, repo, _ = engine(tmp_path, FakeLLM([]))
     eng.ctx.step = 20
     cmd = "python3 sim.py --seed 1"
@@ -102,8 +102,11 @@ def test_ladder_note_at_2_nudge_and_one_reasoning_pass_at_3_abort_at_4(tmp_path)
     assert "Your last 3 attempts" in nudge and nudge.count("`python3 sim.py --seed 1`") == 3 and "same screen" in nudge
     assert "read the code at the failing line" in nudge and "change your hypothesis" in nudge
     eng.think_steps = 0
+    for _ in range(E.LOOP_HINT + 1, E.LOOP_ABORT):
+        play(eng, cmd, "exit code 0\nsame screen")
+        assert not eng._abort_loop                                              # below the abort: still no stop
     play(eng, cmd, "exit code 0\nsame screen")
-    assert eng._abort_loop == 4 and eng.think_steps == 0
+    assert eng._abort_loop == E.LOOP_ABORT and eng.think_steps == 0
     assert eng.events.of("loop_abort") and eng.events.of("loop")
 
 
@@ -122,13 +125,13 @@ def test_the_ladder_limits_come_from_the_config(tmp_path):
     assert eng._abort_loop == 5
 
 
-def test_a_loop_ends_the_segment_at_the_4th_repeat_without_another_model_call(tmp_path):
-    steps = [call("run", command="python3 -c 'import nothere'")] * 4 + [say("never asked")]
+def test_a_loop_ends_the_segment_at_the_abort_repeat_without_another_model_call(tmp_path):
+    steps = [call("run", command="python3 -c 'import nothere'")] * E.LOOP_ABORT + [say("never asked")]
     llm = FakeLLM(steps)
     eng, repo, _ = engine(tmp_path, llm)
     eng.config = {**eng.config, "coding": {**(eng.config.get("coding") or {}), "forced_summary": False}}      # the bare stop (the summary: test_codeagent_finalize.py)
     res = eng.turn("make it run")
-    assert res.stopped == "loop" and len(llm.calls) == 4 and len(llm.script) == 1
+    assert res.stopped == "loop" and len(llm.calls) == E.LOOP_ABORT and len(llm.script) == 1
     assert eng.dead_ends.items and eng.dead_ends.items[-1]["tool"] == "run"
 
 
@@ -301,15 +304,15 @@ def test_a_success_of_the_same_attempt_clears_the_error_dead_end_but_a_repeat_do
 def test_the_restarted_segment_after_a_loop_abort_starts_with_the_dead_end(tmp_path):
     bad = call("run", command="python3 -c 'import nothere_module'")
     other = call("run", command="python3 -c 'import still_missing_module'")
-    llm = FakeLLM([bad] * 4 + [other] * 4 + [say("unused")])
+    llm = FakeLLM([bad] * E.LOOP_ABORT + [other] * E.LOOP_ABORT + [say("unused")])
     eng, repo, _o = new_session_engine(tmp_path, llm)
     eng.session_id = "sess"
     eng.config = {**eng.config, "coding": {**eng.config["coding"], "autopilot_inhibit": False, "autopilot_max_idle": 2}}
-    eng.pol.max_steps, eng.pol.steps_set = 12, True
+    eng.pol.max_steps, eng.pol.steps_set = 2 * E.LOOP_ABORT + 4, True
     sup = SV.Supervisor(eng, clock=Clock(), save=lambda: S.save_session(eng))
     res = sup.run("one small task")
     assert [d["reason"] for d in sup.decisions][:1] == ["loop"] and res.reason == "idle"
-    first_of_second = llm.calls[4]["snapshot"]
+    first_of_second = llm.calls[E.LOOP_ABORT]["snapshot"]
     text = "\n".join(str(m["content"]) for m in first_of_second)
     assert "DEAD ENDS (already tried, same result - do not repeat)" in text and "import nothere_module" in text
 
@@ -357,34 +360,36 @@ def test_family_key_shapes():
     assert LG.family_key("search", {"pattern": "x"}) is None and LG.family_key("read_file", {"path": "a.py"}) is None
 
 
-def test_thirty_python_c_reads_with_changing_output_note_at_5_abort_at_8_and_a_dead_end(tmp_path):
+def test_python_c_reads_with_changing_output_note_at_family_note_abort_at_family_abort_and_a_dead_end(tmp_path):
     eng = fresh(tmp_path, "fam")
     orient(eng)
-    for i in range(1, 5):
+    N, A = LG.FAMILY_NOTE, LG.FAMILY_ABORT
+    for i in range(1, N):
         playt(eng, "run", pyc(i), f"exit code 0\nmatch {i} " + "x" * i)
     assert "Same kind of command" not in last_tool(eng)
-    playt(eng, "run", pyc(5), "exit code 0\nmatch 5 xxxxx")
+    playt(eng, "run", pyc(N), f"exit code 0\nmatch {N} " + "x" * N)
     tail = last_tool(eng)
-    assert tail.count("Same kind of command as your last 4 (python3 tests/test_scripted_playthroughs.py") == 1 and "Make an edit now, or try a different approach." in tail
-    for i in range(6, 8):
+    assert tail.count(f"Same kind of command as your last {N - 1} (python3 tests/test_scripted_playthroughs.py") == 1 and "Make an edit now, or try a different approach." in tail
+    for i in range(N + 1, A):
         playt(eng, "run", pyc(i), f"exit code 0\nmatch {i} " + "y" * i)
         assert "Same kind of command" not in last_tool(eng) and not eng._abort_loop           # one note only
-    playt(eng, "run", pyc(8), "exit code 0\nmatch 8 zzzzzzzz")
-    assert eng._abort_loop == 8 and eng.think_steps == 0
+    playt(eng, "run", pyc(A), f"exit code 0\nmatch {A} " + "z" * A)
+    assert eng._abort_loop == A and eng.think_steps == 0
     ev = eng.events.of("loop_abort")[-1]
     assert ev["shape"] == "family" and ev["tool"] == "run"
-    assert any("tests/test_scripted_playthroughs.py" in e["cmd"] and e["out"] == "investigated without editing" and e["times"] == 8 for e in eng.dead_ends.items)
+    assert any("tests/test_scripted_playthroughs.py" in e["cmd"] and e["out"] == "investigated without editing" and e["times"] == A for e in eng.dead_ends.items)
     assert not eng.events.of("loop")                                                       # the old ladder never saw equal outcomes
 
 
 def test_an_edit_resets_the_family_counter(tmp_path):
     eng = fresh(tmp_path, "reset")
     orient(eng)
-    for i in range(1, 8):
+    A = LG.FAMILY_ABORT
+    for i in range(1, A):
         playt(eng, "run", pyc(i), f"exit code 0\nm{i} " + "q" * i)
     assert not eng._abort_loop
     edit(eng)
-    for i in range(8, 14):                                   # 6 more calls since the edit: well below 8, and the note may come again
+    for i in range(A, A + LG.FAMILY_NOTE + 1):                # a few more calls since the edit: below the abort, and the note may come again
         playt(eng, "run", pyc(i), f"exit code 0\nm{i} " + "q" * i)
     assert not eng._abort_loop
     assert "Same kind of command" in "\n".join(m["content"] for m in eng.ctx.messages if m["role"] == "tool")
@@ -393,12 +398,13 @@ def test_an_edit_resets_the_family_counter(tmp_path):
 def test_other_reads_do_not_reset_the_family_counter(tmp_path):
     eng = fresh(tmp_path, "noreset")
     orient(eng)
-    for i in range(1, 9):
+    A, W = LG.FAMILY_ABORT, LG.FAMILY_WINDOW
+    for i in range(1, A + 1):
         playt(eng, "run", pyc(i), f"exit code 0\nm{i} " + "q" * i)
-        if i < 8:
-            playt(eng, "read_file", {"path": f"other{i}.py"}, f"text of other {i}")       # 8 of 15 calls: window of 12 still holds >= 5, then 8
-    assert eng._abort_loop in (0, 8)
-    # 12-call window with an interleaved read: 6 family calls in the window, so only the note appears, no abort yet
+        if i < A:
+            playt(eng, "read_file", {"path": f"other{i}.py"}, f"text of other {i}")       # A of 2A-1 calls: the window holds only about W/2 family calls
+    assert W // 2 < A and eng._abort_loop in (0, A)
+    # interleaved reads thin the window out: the note appears, no abort
     assert "Same kind of command" in "\n".join(m["content"] for m in eng.ctx.messages if m["role"] == "tool")
 
 
@@ -424,28 +430,29 @@ def test_edit_every_sixth_call_never_counts(tmp_path):
     assert not eng._abort_loop and "Same kind" not in "\n".join(m["content"] for m in eng.ctx.messages if m["role"] == "tool")
 
 
-def test_reading_twenty_different_files_is_no_family_but_the_look_guard_still_applies(tmp_path):
+def test_reading_many_different_files_is_no_family_but_the_look_guard_still_applies(tmp_path):
     eng = fresh(tmp_path, "look")
-    for i in range(20):
+    for i in range(lookact.LOOK_BLOCK_AT):
         playt(eng, "read_file", {"path": f"src/mod{i}.py"}, f"contents of module {i}")
         eng.lookact.observe("read_file", {"path": f"src/mod{i}.py"}, f"contents of module {i}")
     assert not eng._abort_loop and "Same kind" not in "\n".join(m["content"] for m in eng.ctx.messages if m["role"] == "tool")
-    assert eng.lookact.blocked("read_file", {"path": "src/mod20.py"}) is not None          # the existing pause is untouched
+    assert eng.lookact.blocked("read_file", {"path": f"src/mod{lookact.LOOK_BLOCK_AT}.py"}) is not None          # the existing pause is untouched
 
 
-def test_run_spam_fourteen_sed_reads_of_different_files_without_edits(tmp_path):
+def test_run_spam_sed_reads_of_different_files_without_edits(tmp_path):
     eng = fresh(tmp_path, "spam")
     orient(eng)
-    for i in range(1, 10):
+    N, A = LG.RUN_SPAM_NOTE, LG.RUN_SPAM_ABORT
+    for i in range(1, N):
         playt(eng, "run", {"command": f"sed -n 1,20p mod{i}.py"}, f"exit code 0\nbody {i}")
     assert not eng._abort_loop and "changed nothing" not in last_tool(eng)
-    playt(eng, "run", {"command": "sed -n 1,20p mod10.py"}, "exit code 0\nbody 10")
-    assert "10 of your last 10 calls" in last_tool(eng) or "changed nothing" in last_tool(eng)
-    for i in range(11, 14):
+    playt(eng, "run", {"command": f"sed -n 1,20p mod{N}.py"}, f"exit code 0\nbody {N}")
+    assert f"{N} of your last {N} calls" in last_tool(eng) or "changed nothing" in last_tool(eng)
+    for i in range(N + 1, A):
         playt(eng, "run", {"command": f"sed -n 1,20p mod{i}.py"}, f"exit code 0\nbody {i}")
     assert not eng._abort_loop
-    playt(eng, "run", {"command": "sed -n 1,20p mod14.py"}, "exit code 0\nbody 14")
-    assert eng._abort_loop == 14 and eng.events.of("loop_abort")[-1]["shape"] == "run_spam"
+    playt(eng, "run", {"command": f"sed -n 1,20p mod{A}.py"}, f"exit code 0\nbody {A}")
+    assert eng._abort_loop == A and eng.events.of("loop_abort")[-1]["shape"] == "run_spam"
     assert any(e["out"] == "investigated without editing" for e in eng.dead_ends.items)
 
 
@@ -467,9 +474,9 @@ def test_test_runs_with_a_changing_summary_are_excluded_but_identical_ones_count
     assert not eng._abort_loop                                                              # the verdict changes every time
     eng2 = fresh(tmp_path, "tests2")
     orient(eng2)
-    for i in range(14):
+    for i in range(max(E.LOOP_ABORT, LG.FAMILY_ABORT, LG.RUN_SPAM_ABORT)):
         playt(eng2, "run", {"command": "python3 -m pytest -q tests"}, f"exit code 0\n5 passed in 0.{i}s")
-    assert eng2._abort_loop in (8, 14) and eng2.events.of("loop_abort")
+    assert eng2._abort_loop in (E.LOOP_ABORT, LG.FAMILY_ABORT, LG.RUN_SPAM_ABORT) and eng2.events.of("loop_abort")
 
 
 def test_first_six_steps_of_a_stage_are_lenient(tmp_path):
@@ -503,9 +510,9 @@ def test_family_limits_come_from_the_config(tmp_path):
 def test_the_new_guards_never_force_thinking(tmp_path):
     eng = fresh(tmp_path, "think")
     orient(eng)
-    for i in range(1, 9):
+    for i in range(1, LG.FAMILY_ABORT + 1):
         playt(eng, "run", pyc(i), f"exit code 0\nm{i} " + "u" * i)
-    assert eng._abort_loop == 8 and eng.think_steps == 0 and not systems(eng)
+    assert eng._abort_loop == LG.FAMILY_ABORT and eng.think_steps == 0 and not systems(eng)
 
 
 

@@ -121,6 +121,34 @@ def test_run_topic_runs_chosen_entry():
     assert ran == [["panel"]]
 
 
+class TerminalStubConsole(StubConsole):
+    """StubConsole plus the bits run_topic's redraw path needs: is_terminal and clear()."""
+
+    def __init__(self, answers=()):
+        super().__init__(answers)
+        self.is_terminal = True
+        self.clears = 0
+
+    def clear(self):
+        self.clears += 1
+
+
+def test_run_topic_waits_for_enter_then_clears_and_redraws_by_default(monkeypatch):
+    monkeypatch.setattr("agent.config.load_config", lambda: {"ui": {}})
+    c = TerminalStubConsole(["1", "", ""])  # pick #1, press Enter to continue, then blank = back
+    L.run_topic("status", c, app=lambda argv, **k: None)
+    assert c.clears == 1
+    # redrawn: the topic's own title was printed a second time after the clear.
+    assert sum("Background helper" in line for line in c.out) == 2
+
+
+def test_run_topic_keeps_output_when_the_setting_is_on(monkeypatch):
+    monkeypatch.setattr("agent.config.load_config", lambda: {"ui": {"keep_command_output": True}})
+    c = TerminalStubConsole(["1", ""])  # no extra prompt to answer: nothing is cleared, so nothing to wait for
+    L.run_topic("status", c, app=lambda argv, **k: None)
+    assert c.clears == 0
+
+
 def test_whatsapp_installed_follows_plugin_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENT_PLUGIN_DIR", str(tmp_path))
     assert L.whatsapp_installed() is False

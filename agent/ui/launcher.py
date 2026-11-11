@@ -423,7 +423,18 @@ def render(title: str, sections: list[tuple[str, list[Entry]]], console: Any) ->
 
 
 def run_topic(topic: str, console: Any, app: Any = None, sections: list | None = None) -> None:
-    """Interactive numbered loop for one topic (blank / q / b returns to the home screen)."""
+    """Interactive numbered loop for one topic (blank / q / b returns to the home screen).
+
+    After a command runs, it waits for Enter, then clears the screen and redraws the list -
+    otherwise the command's own output (a WhatsApp bridge session log, a quick status check,
+    a build's output, ...) either stacks forever above a bare "number:" prompt, or - the
+    first version of this, wrong - clears itself away before a fast command's output could
+    even be read. Waiting for an explicit Enter is what fixes both: nothing disappears
+    before you have seen it, and picking the next number always starts from a clean list.
+    `ui.keep_command_output` (off by default) skips the wait and the clearing entirely, for
+    someone who wants every command's output to just keep stacking up on screen."""
+    from agent.config import load_config
+
     if topic == "commands":
         title, secs = "All commands", sections or all_commands_sections(app)
     else:
@@ -441,3 +452,11 @@ def run_topic(topic: str, console: Any, app: Any = None, sections: list | None =
             console.print("not a valid number")
             continue
         execute(flat[int(raw) - 1], console, app)
+        keep = bool((load_config().get("ui") or {}).get("keep_command_output"))
+        if not keep and getattr(console, "is_terminal", False):
+            try:
+                console.input("\n  (press Enter to continue) ")
+            except (EOFError, KeyboardInterrupt):
+                return
+            console.clear()
+            flat = render(title, secs, console)

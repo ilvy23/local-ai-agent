@@ -644,3 +644,62 @@ def test_cap_counter_survives_json_reload_and_fresh_stage(tmp_path):
     st = ST.Stage(2, "t", "g", cap_segments=1)
     back = ST.StagePlan.from_json(ST.StagePlan([st], 0, "single", "").to_json())
     assert back.stages[0].cap_segments == 1
+
+
+# ── a fully confirmed stage is closed whatever ended the segment ─────────────
+
+class ConfirmRunner(Runner):
+    """Runner whose stage-end measurement (stage_tests) and close() are observable."""
+
+    def __init__(self, script, counter, red=""):
+        super().__init__(script, counter)
+        self.red, self.closed = red, []
+
+    def stage_tests(self, st):
+        return self.red
+
+    def close(self, st, note):
+        st.status = "done"
+        self.closed.append((st.id, note))
+        return "done"
+
+
+def confirmed_plan(done=3, total=3):
+    from agent import plan as plan_mod
+
+    return plan_mod.Plan("t", [plan_mod.Item(i, f"item {i}", done=i <= done, evidence="x") for i in range(1, total + 1)])
+
+
+def confirm_make(tmp_path, script, *, plan, red="", stages=1):
+    sup, sess, _r, clock = make(tmp_path, script, stages=stages)
+    sess.plan = types.SimpleNamespace(plan=plan)
+    sup.runner = runner = ConfirmRunner(script, {"n": 0}, red)
+    return sup, sess, runner
+
+
+@pytest.mark.parametrize("stop", ["cap", "verify_budget", "loop"])
+def test_all_confirmed_stage_is_closed_whatever_the_stop(tmp_path, stop):
+    sup, _s, runner = confirm_make(tmp_path, {1: [stop]}, plan=confirmed_plan())
+    res = sup.run("task")
+    assert res.verdict == "done" and res.exit_code == 0
+    assert len(runner.calls) == 1 and runner.closed and actions(res) == ["closed_confirmed"]     # no resume
+
+
+@pytest.mark.parametrize("stop", ["cap", "verify_budget", "loop"])
+def test_confirmed_but_measured_tests_red_is_not_closed(tmp_path, stop):
+    sup, _s, runner = confirm_make(tmp_path, {1: [stop, "ok"]}, plan=confirmed_plan(), red="3 tests are newly red")
+    res = sup.run("task")
+    assert not runner.closed and "closed_confirmed" not in actions(res)
+    assert actions(res)[0] == "resume" and len(runner.calls) == 2       # graded recovery stays for a stage that is not satisfied
+
+
+def test_partly_confirmed_stage_is_not_closed(tmp_path):
+    sup, _s, runner = confirm_make(tmp_path, {1: ["cap", "ok"]}, plan=confirmed_plan(done=2))
+    res = sup.run("task")
+    assert not runner.closed and actions(res)[0] == "resume"
+
+
+def test_resume_does_not_reset_the_acceptance_list(tmp_path):
+    sup, _s, runner = confirm_make(tmp_path, {1: ["cap", "cap", "ok"]}, plan=confirmed_plan(done=2))
+    sup.run("task")
+    assert [fresh for _id, _note, fresh in runner.calls][1:] == [False, False]     # only the first segment makes a new list

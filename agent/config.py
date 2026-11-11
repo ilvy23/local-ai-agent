@@ -124,6 +124,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # override event -> kaomoji entries without touching the code, e.g.: {compacting: "o.O"}.
         "mood_emotes": True,
         "mood_map": {},
+        # A topic submenu (WhatsApp, Code, ...) normally clears the screen and redraws the
+        # numbered list after each command, so the next thing you see is the menu, not the
+        # last command's leftover output (a WhatsApp bridge session log, a build's output,
+        # ...) stacked above a bare "number:" prompt. Set True to keep that output on screen
+        # instead - useful if you want to read it before picking the next number.
+        "keep_command_output": False,
     },
     "memory": {
         "recall_k": 6,

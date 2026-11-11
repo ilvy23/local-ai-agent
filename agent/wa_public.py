@@ -462,13 +462,79 @@ def wa_auto_sent(
     console.print(f"[dim]{len(rows)} message(s).[/dim]")
 
 
-@auto_app.command("status")
-def wa_auto_status() -> None:
-    """Show the auto-reply mode + pending/held drafts + today's sends."""
-    from whatsapp.autoreply import _sent_today, pending
+@auto_app.command("halt")
+def wa_auto_halt(
+    reason: str = typer.Argument("", help="Optional note for why (shown by `wa auto status`)."),
+) -> None:
+    """Emergency stop: auto-reply does nothing - no drafts, no sends - until `wa auto resume`.
+    Faster than editing config: a plain file, checked first thing every cycle."""
+    from whatsapp.autoreply import halt
+
+    halt(reason)
+    Console().print("[red]Auto-reply HALTED.[/red] Nothing will be drafted or sent until `wa auto resume`.")
+
+
+@auto_app.command("resume")
+def wa_auto_resume() -> None:
+    """Lift the emergency stop set by `wa auto halt`. Mode/allowlist/caps are unchanged -
+    whatever was configured before the halt is what resumes."""
+    from whatsapp.autoreply import resume
+
+    console = Console()
+    if resume():
+        console.print("[green]Auto-reply resumed.[/green]")
+    else:
+        console.print("[dim]Wasn't halted.[/dim]")
+
+
+@auto_app.command("audit")
+def wa_auto_audit(
+    contact: str = typer.Argument(None, help="Only this contact's history (name or jid)."),
+    limit: int = typer.Option(100, "--limit", help="How many rows, newest first."),
+) -> None:
+    """Every auto-reply decision ever logged for review - held, scheduled, cancelled, sent -
+    not just what's still pending (that's `wa auto status`)."""
+    from whatsapp.autoreply import audit as audit_rows
 
     console = Console()
     config = load_config()
+    with open_store(config) as store:
+        jid = None
+        if contact:
+            jid = as_jid(store, contact)
+            if not jid:
+                console.print(f"[red]No contact matching {contact!r}.[/red]")
+                raise typer.Exit(1)
+        rows = audit_rows(store, limit=limit, contact_jid=jid)
+        names = {}
+        for r in rows:
+            j = r["contact_jid"]
+            if j not in names:
+                row = store.conn.execute(
+                    "SELECT name FROM wa_chats WHERE jid=? UNION SELECT name FROM wa_contacts WHERE jid=?", (j, j)
+                ).fetchone()
+                names[j] = (row["name"] if row else None) or j
+    if not rows:
+        console.print("[dim]No auto-reply history yet.[/dim]")
+        return
+    table = Table("id", "when", "contact", "status", "reason", "their message", "drafted reply")
+    for r in rows:
+        when = (r["sent_at"] or r["created_at"] or "")[:19]
+        table.add_row(str(r["id"]), when, names.get(r["contact_jid"], r["contact_jid"]),
+                      r["status"], r["reason"] or "", (r["incoming_text"] or "")[:30], (r["draft"] or "")[:40])
+    console.print(table)
+    console.print(f"[dim]{len(rows)} row(s).[/dim]")
+
+
+@auto_app.command("status")
+def wa_auto_status() -> None:
+    """Show the auto-reply mode + pending/held drafts + today's sends."""
+    from whatsapp.autoreply import _sent_today, halted, pending
+
+    console = Console()
+    config = load_config()
+    if halted():
+        console.print("[bold red]HALTED[/bold red] - drafting and sending are both off until `wa auto resume`.\n")
     ac = config["whatsapp"].get("auto_reply", {})
     contacts = config["whatsapp"].get("auto_reply_contacts") or []
     mode = ac.get("mode", "off")
@@ -650,6 +716,13 @@ def wa_auto_allow_add(
         if res.jid in {as_jid(store, e) for e in jids}:
             console.print(f"[dim]{res.name or res.jid} is already allowed.[/dim]")
             return
+    from whatsapp.autoreply import check_allowlist_size
+
+    try:
+        check_allowlist_size([*jids, res.jid])
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from None
     ac = config["whatsapp"].get("auto_reply", {})
     console.print(f"\n[bold]{res.name or res.jid}[/bold]  ({res.jid})")
     console.print(f"  {n} messages from you — the AI copies your voice from these.")

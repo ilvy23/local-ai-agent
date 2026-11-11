@@ -1,12 +1,12 @@
-# Handoff: nightage (ilvy23/local-ai-agent)
+# Handoff: nightage
 
 ## Current status (read this first)
 - `main` = `claude/hopeful-allen-7l6x9m` = commit 40c5f58. Everything below marked done is merged and pushed.
-- User setup: NixOS, AMD RX 9070 XT 16 GB + RTX 3060 Ti 8 GB, two Ollama servers:
+- User setup: NixOS, two GPUs (16 GB + 8 GB), two Ollama servers:
   - the normal one (:11434, AMD only);
   - `ollama-vk` (Vulkan, :11436, both cards, "dual" mode).
 - Models: gpt-oss:20b and a custom `qwen3.8:27b-text` (only on the Vulkan server).
-- The user installs with `curl -LsSf https://raw.githubusercontent.com/ilvy23/local-ai-agent/main/install.sh | sh`.
+- The user installs with `curl -LsSf https://raw.githubusercontent.com/<owner>/<repo>/main/install.sh | sh`.
   Config: ~/.local/share/nightage/config.yaml.
 
 ### Done (rounds 1-3)
@@ -56,7 +56,7 @@
 # Plan: full bug sweep + high-impact improvements (model pipeline, coding agent, framework)
 
 ## Context
-The user runs nightage on NixOS: AMD 16 GB + RTX 3060 Ti 8 GB, a second "Vulkan" Ollama on :11436 spanning both
+The user runs nightage on NixOS: two GPUs (16 GB + 8 GB), a second "Vulkan" Ollama on :11436 spanning both
 cards, main model gpt-oss:20b. They saw wrong models after `/model`, gpt-oss suddenly 100 % on the CPU (9 vs 85 tok/s,
 4-min tool turns), ~10 s waits, the context choice not applied, confusing texts. First fixes are pushed on
 `claude/hopeful-allen-7l6x9m` (follow_chat, `_foreground_models`, cap_ctx bypass, `_slow_note`, warm-up, prose GPU).

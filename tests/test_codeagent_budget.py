@@ -4,6 +4,7 @@ segments (seconds / steps / edits per segment), a fake clock - no model."""
 
 from __future__ import annotations
 
+import math
 import types
 
 import pytest
@@ -76,27 +77,29 @@ def stage_budget_events(sess):
 
 def test_rule_defaults_and_config_overrides():
     st = ST.Stage(1, "a", "g")
-    assert ST.budget_limits({}, st) == (25 * 60, 180, 3)
+    M, S = ST.STAGE_MAX_MINUTES, ST.STAGE_MAX_STEPS
+    assert ST.budget_limits({}, st) == (M * 60, S, ST.STAGE_MIN_EDITS)
     assert ST.budget_limits({"coding": {"stage_max_minutes": 10, "stage_max_steps": "50", "stage_min_edits_per_100_steps": 5}}, st) == (600, 50, 5)
-    assert ST.budget_limits({"coding": {"stage_max_minutes": "junk"}}, st)[0] == 25 * 60               # a broken value falls back
-    st.spent_steps = 179
+    assert ST.budget_limits({"coding": {"stage_max_minutes": "junk"}}, st)[0] == M * 60               # a broken value falls back
+    st.spent_steps = S - 1
     assert ST.budget_blocked(st, {}) == ""
-    st.spent_steps = 180
+    st.spent_steps = S
     assert ST.budget_blocked(st, {}).startswith("budget: ")                                             # steps alone, no edits
-    assert ST.budget_blocked(st, {"coding": {"stage_max_steps": 400}}) == ""                           # the override moves the line
-    st.spent_steps, st.spent_s = 0, 25 * 60
-    assert ST.budget_blocked(st, {}) == "budget: 25 min / 0 steps / 0 edits"
+    assert ST.budget_blocked(st, {"coding": {"stage_max_steps": 2 * S}}) == ""                           # the override moves the line
+    st.spent_steps, st.spent_s = 0, M * 60
+    assert ST.budget_blocked(st, {}) == f"budget: {M:g} min / 0 steps / 0 edits"
     st.budget_scale = 0.5
-    st.spent_s = 12 * 60
-    assert ST.budget_blocked(st, {}) == "" and ST.budget_blocked(ST.Stage(1, "a", "g", spent_s=750, budget_scale=0.5), {})
+    st.spent_s = M * 30 - 60                                                                           # just under half the limit
+    assert ST.budget_blocked(st, {}) == "" and ST.budget_blocked(ST.Stage(1, "a", "g", spent_s=M * 30, budget_scale=0.5), {})
 
 
 def test_rule_edits_keep_a_stage_alive_up_to_3x():
     cfg = {"coding": {"stage_max_minutes": 10, "stage_max_steps": 100}}
-    st = ST.Stage(1, "a", "g", spent_s=700, spent_steps=120, real_edits=4)                              # needs ceil(1.2 * 3) = 4
+    need = math.ceil(1.2 * ST.STAGE_MIN_EDITS)                                                          # 120 steps at STAGE_MIN_EDITS per 100
+    st = ST.Stage(1, "a", "g", spent_s=700, spent_steps=120, real_edits=need)
     assert ST.budget_blocked(st, cfg) == ""
-    st.real_edits = 3
-    assert ST.budget_blocked(st, cfg) == "budget: 12 min / 120 steps / 3 edits"
+    st.real_edits = need - 1
+    assert ST.budget_blocked(st, cfg) == f"budget: 12 min / 120 steps / {need - 1} edits"
     st.real_edits, st.spent_steps = 999, 299
     assert ST.budget_blocked(st, cfg) == ""
     st.spent_steps = 300                                                                                # the hard step ceiling
@@ -159,9 +162,9 @@ def test_single_stage_blocked_by_budget_twice_is_partial_3(tmp_path):
 
 
 def test_default_budget_without_config(tmp_path):
-    sup, sess, runner, res = run(tmp_path, {1: [(1499, 179, 0), (2, 1, 0), "ok"], 2: ["ok"]})
+    sup, sess, runner, res = run(tmp_path, {1: [(ST.STAGE_MAX_MINUTES * 60 - 1, ST.STAGE_MAX_STEPS - 1, 0), (2, 1, 0), "ok"], 2: ["ok"]})
     first = sess.events.of("stage_budget")[0]
-    assert (first["action"], first["spent_s"], first["steps"]) == ("block", 1501.0, 180)           # the defaults: 25 min or 180 steps
+    assert (first["action"], first["spent_s"], first["steps"]) == ("block", ST.STAGE_MAX_MINUTES * 60 + 1.0, ST.STAGE_MAX_STEPS)           # the defaults: STAGE_MAX_MINUTES or STAGE_MAX_STEPS
 
 
 def test_sub_stages_get_the_same_budget_each(tmp_path):

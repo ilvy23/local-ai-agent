@@ -53,16 +53,28 @@ def stored_assistant(eng):
     return [m["content"] for m in eng.ctx.messages if m["role"] == "assistant" and not m["content"].lstrip().startswith("{")]
 
 
+# The default budget (PH.VERIFY_PHASE_BUDGET) is now as long as the family guard's abort, so a replay of identical-looking heredocs would end 'loop' first.
+# These replays set the budget explicitly (config wins, also inside a stage) just below the family abort; the ordering budget < abort is what they pin.
+BUDGET = min(PH.VERIFY_PHASE_BUDGET, LG.FAMILY_ABORT - 2)
+RUNS = BUDGET + 6                                                                      # more runs than the budget allows
+
+
+def budgeted(tmp_path, llm):
+    eng, repo, out = engine(tmp_path, llm)
+    cfg(eng, verify_phase_budget=BUDGET)
+    return eng, repo, out
+
+
 PREFIX = "[stopped: verify_budget - the post-edit verification budget was used up - summary below was written after the stop; verified facts:"
 
 
 # ── the verification phase ──────────────────────────────────────────────────
 
-def test_replay_the_budget_ends_the_tool_use_after_six_and_one_toolless_turn_writes_the_summary(tmp_path):
-    llm = SummaryLLM(shape(12), summary=["Built snake.py (curses snake game). I could not run the curses screen; only smoke tests of the logic ran."])
-    eng, repo, out = engine(tmp_path, llm)
+def test_replay_the_budget_ends_the_tool_use_after_the_budget_and_one_toolless_turn_writes_the_summary(tmp_path):
+    llm = SummaryLLM(shape(RUNS), summary=["Built snake.py (curses snake game). I could not run the curses screen; only smoke tests of the logic ran."])
+    eng, repo, out = budgeted(tmp_path, llm)
     res = eng.turn("Make a snake game.")
-    assert res.stopped == "verify_budget" and res.steps == 1 + 6 and len(llm.calls) == 7 and len(llm.script) == 6      # six runs after the edit, then no more tool use
+    assert res.stopped == "verify_budget" and res.steps == 1 + BUDGET and len(llm.calls) == 1 + BUDGET and len(llm.script) == RUNS - BUDGET      # BUDGET runs after the edit, then no more tool use
     assert len(llm.summaries) == 1                                                        # exactly one summary turn
     s = llm.summaries[0]
     assert s["think"] is False and s["opts"]["num_predict"] <= 400                       # tools disabled (== [] in the fake), thinking off, <= 400 tokens
@@ -75,8 +87,8 @@ def test_replay_the_budget_ends_the_tool_use_after_six_and_one_toolless_turn_wri
 
 
 def test_the_stored_assistant_text_has_no_harness_line(tmp_path):
-    llm = SummaryLLM(shape(12), summary=["Built snake.py. Not run on a real terminal."])
-    eng, _repo, _ = engine(tmp_path, llm)
+    llm = SummaryLLM(shape(RUNS), summary=["Built snake.py. Not run on a real terminal."])
+    eng, _repo, _ = budgeted(tmp_path, llm)
     res = eng.turn("Make a snake game.")
     assert stored_assistant(eng)[-1] == "Built snake.py. Not run on a real terminal." and res.text != stored_assistant(eng)[-1]
     assert not any("[stopped:" in str(m.get("content")) for m in eng.ctx.messages)
@@ -167,19 +179,20 @@ def test_budget_counts_from_the_last_failure_and_from_the_last_edit(tmp_path):
         n[0] += 1
         playt(eng, "run", {"command": f"python3 -c 'import a; print({n[0]})'"}, f"exit code 0\nstep {n[0]} " + "w" * 7 * n[0])
 
-    for _ in range(5):
+    b = PH.VERIFY_PHASE_BUDGET
+    for _ in range(b - 1):
         clean()
-    playt(eng, "run", {"command": "python3 snake.py"}, "exit code 1\nNameError: name 'x' is not defined")            # reset at 5 of 6
-    for _ in range(5):
+    playt(eng, "run", {"command": "python3 snake.py"}, "exit code 1\nNameError: name 'x' is not defined")            # reset one short of the budget
+    for _ in range(b - 1):
         clean()
-    assert not eng.phase.ended and eng.phase.clean == 5
+    assert not eng.phase.ended and eng.phase.clean == b - 1
     edit(eng, 1)                                                                          # a new real edit resets as well
     assert eng.phase.clean == 0 and eng.phase.edited
-    for _ in range(5):
+    for _ in range(b - 1):
         clean()
     assert not eng.phase.ended
     clean()
-    assert eng.phase.ended and eng.phase.clean == 6
+    assert eng.phase.ended and eng.phase.clean == b
 
 
 def test_scratch_writes_and_changed_files_are_activity_not_clean_calls(tmp_path):
@@ -195,7 +208,7 @@ def test_scratch_writes_and_changed_files_are_activity_not_clean_calls(tmp_path)
 
 
 def test_budget_zero_and_min_are_configurable(tmp_path):
-    llm = SummaryLLM(shape(12), summary=["done"])
+    llm = SummaryLLM(shape(RUNS), summary=["done"])
     eng, _repo, _ = engine(tmp_path, llm)
     cfg(eng, verify_phase_budget=3)
     res = eng.turn("Make a snake game.")
@@ -211,8 +224,8 @@ def test_budget_zero_and_min_are_configurable(tmp_path):
 # ── the honest forced ending ────────────────────────────────────────────────
 
 def test_fallback_mechanical_summary_when_the_summary_call_raises(tmp_path):
-    llm = SummaryLLM(shape(12), summary=[RuntimeError("model gone")])
-    eng, _repo, out = engine(tmp_path, llm)
+    llm = SummaryLLM(shape(RUNS), summary=[RuntimeError("model gone")])
+    eng, _repo, out = budgeted(tmp_path, llm)
     res = eng.turn("Make a snake game.")
     assert res.stopped == "verify_budget" and len(llm.summaries) == 1
     body = res.text.split("\n\n", 1)[1]
@@ -223,15 +236,15 @@ def test_fallback_mechanical_summary_when_the_summary_call_raises(tmp_path):
 
 def test_an_unusable_summary_answer_falls_back_too(tmp_path):
     tool_call = {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "run", "arguments": {"command": "ls"}}}]}
-    llm = SummaryLLM(shape(12), summary=[tool_call])
-    eng, _repo, _ = engine(tmp_path, llm)
+    llm = SummaryLLM(shape(RUNS), summary=[tool_call])
+    eng, _repo, _ = budgeted(tmp_path, llm)
     res = eng.turn("Make a snake game.")
     assert "Work stopped before a final answer" in res.text and len(llm.summaries) == 1
 
 
 def test_forced_summary_can_be_switched_off(tmp_path):
-    llm = SummaryLLM(shape(12), summary=["never asked"])
-    eng, _repo, _ = engine(tmp_path, llm)
+    llm = SummaryLLM(shape(RUNS), summary=["never asked"])
+    eng, _repo, _ = budgeted(tmp_path, llm)
     cfg(eng, forced_summary=False)
     res = eng.turn("Make a snake game.")
     assert res.stopped == "verify_budget" and res.text is None and not llm.summaries
@@ -272,23 +285,38 @@ def test_an_interrupted_or_dead_server_prompt_gets_no_summary(tmp_path):
 
 
 def test_the_summary_call_is_the_only_extra_call_and_the_conversation_is_reused(tmp_path):
-    llm = SummaryLLM(shape(12), summary=["ok"])
-    eng, _repo, _ = engine(tmp_path, llm)
+    llm = SummaryLLM(shape(RUNS), summary=["ok"])
+    eng, _repo, _ = budgeted(tmp_path, llm)
     eng.turn("Make a snake game.")
     s = llm.summaries[0]["messages"]
-    assert s[0]["role"] == "system" and any(m["role"] == "tool" for m in s) and len(llm.calls) == 7             # the history rides along; no other extra call
+    assert s[0]["role"] == "system" and any(m["role"] == "tool" for m in s) and len(llm.calls) == 1 + BUDGET     # the history rides along; no other extra call
     assert all(c["think"] is False for c in llm.calls)                                                         # no reasoning pass from the guards
 
 
 # ── autopilot / stage runs stay as they were ────────────────────────────────
 
 def test_a_stage_run_gets_no_summary_and_stops_as_verify_budget(tmp_path):
-    llm = SummaryLLM(shape(12), summary=["must not be asked"])
-    eng, _repo, out = engine(tmp_path, llm)
+    llm = SummaryLLM(shape(RUNS), summary=["must not be asked"])
+    eng, _repo, out = budgeted(tmp_path, llm)
     eng.stage_goal = "stage 1 goal"                                                      # what begin_stage sets: the supervisor / runner owns the restart
     res = eng.turn("stage 1 goal")
     assert res.stopped == "verify_budget" and res.text is None and not llm.summaries and "[stopped:" not in out.getvalue()
-    assert len(llm.calls) == 7
+    assert len(llm.calls) == 1 + BUDGET
+
+
+def test_inside_a_stage_there_is_no_verify_budget_unless_the_config_sets_one(tmp_path):
+    eng, _repo, _ = engine(tmp_path, SummaryLLM([]))
+    eng.stage_goal = "stage 1 goal"
+    orient(eng)
+    edit(eng)
+    for i in range(PH.VERIFY_PHASE_BUDGET + 3):
+        eng._phase_update("run", {"command": f"python3 -c 'print({i})'"}, f"exit code 0\nline {i}")
+    assert eng.phase.clean == PH.VERIFY_PHASE_BUDGET + 3 and not eng.phase.ended          # a stage ends by its own goal
+    eng.phase.restart()
+    cfg(eng, verify_phase_budget=2)
+    for i in range(2):
+        eng._phase_update("run", {"command": f"python3 -c 'print({i})'"}, f"exit code 0\nline {i}")
+    assert eng.phase.ended                                                                 # an explicit config value wins inside a stage
 
 
 def test_the_supervisor_treats_verify_budget_like_a_loop_stop(tmp_path):

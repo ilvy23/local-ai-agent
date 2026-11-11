@@ -41,6 +41,13 @@ EDITABLE: dict[str, dict[str, Any]] = {
                 "while it's searching/coding/stuck, alongside the normal "
                 "text - purely cosmetic, never replaces the real output.",
     },
+    "keep_command_output": {
+        "path": "ui.keep_command_output", "kind": "bool", "category": "Interface",
+        "help": "After a menu command finishes, a topic's numbered list "
+                "(WhatsApp, Code, ...) normally clears the screen and redraws "
+                "before the next 'number:' prompt. Turn this on to keep the "
+                "command's own output on screen instead.",
+    },
     "chat_model": {
         "path": "models.chat", "kind": "model", "category": "Models",
         "help": f"Used for everyday chat and tool use ({brand.CMD} chat/resume). "

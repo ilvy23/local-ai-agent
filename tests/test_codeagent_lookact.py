@@ -72,16 +72,19 @@ def test_pause_can_be_set_up_front_for_a_restart():
     assert la.blocked("outline", {"path": "a.py"})
 
 
-def test_wander_notes_every_ten_looks_and_edit_gap_after_probing():
+WANDER_EVERY = 20                                                              # lookact.LookAct._wander: a note every 20 look steps (a literal there)
+
+
+def test_wander_notes_every_n_looks_and_edit_gap_after_probing():
     lines = {"n": 0}
     la = L.LookAct(read_lines=lambda: lines["n"], reset_lines=lambda: lines.update(n=0))
-    notes = [r for _ in range(20) for r in la.observe("search", {"pattern": "x"}, "hits")]
+    notes = [r for _ in range(2 * WANDER_EVERY) for r in la.observe("search", {"pattern": "x"}, "hits")]
     assert [r.event for r in notes] == ["wander", "wander"] and not any(r.think for r in notes)
     lines["n"] = 50
     la.observe("write_file", {"path": "a.py"}, "wrote a.py (3 lines)")
     assert la.look_streak == 0 and lines["n"] == 0
     gaps = [r for i in range(L.TEST_STREAK_NUDGE) for r in la.observe("run", {"command": f"python3 a.py {i}"}, "exit code 0")]
-    assert [r.event for r in gaps] == ["edit_gap"] and gaps[0].think
+    assert [r.event for r in gaps] == ["edit_gap"] and not gaps[0].think      # a note only, no reasoning pass
     la.observe("write_file", {"path": ".scratch/t.py"}, "wrote .scratch/t.py")          # scratch is not progress
     assert la.edit_gap == L.TEST_STREAK_NUDGE + 1
 

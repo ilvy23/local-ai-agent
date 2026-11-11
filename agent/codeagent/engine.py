@@ -31,7 +31,7 @@ import httpx
 from rich.markup import escape
 
 from agent import autonomy, plan as plan_mod, toolargs, undo, verify
-from agent.codeagent import stepbudget, brief as brief_mod, prose as prose_mod, checks as checks_mod, cursor as cursor_mod, edits, fileseen, intake as intake_mod, loopguard, phase as phase_mod, policy as policy_mod, profile as profile_mod, reviewer, spill as spill_mod, sprawl as sprawl_mod, stdpytest, tuigate, tuismoke
+from agent.codeagent import projectmap, stepbudget, brief as brief_mod, prose as prose_mod, checks as checks_mod, cursor as cursor_mod, edits, fileseen, intake as intake_mod, loopguard, phase as phase_mod, policy as policy_mod, profile as profile_mod, reviewer, spill as spill_mod, sprawl as sprawl_mod, stdpytest, tuigate, tuismoke
 from agent.codeagent.context import ContextManager, _parse_call, compact_call
 from agent.codeagent.eventlog import EventLog
 from agent.codeagent.livectl import LiveControl, clip as _live_clip
@@ -48,7 +48,7 @@ DENIED = "The user declined this action, so it was NOT performed. Do not claim i
 MAX_GATE_NUDGES = 12               # HARD ceiling of "not done yet" messages per finish attempt (reset by progress), all gates together: nothing can loop forever
 GATE_CONSECUTIVE = 4               # the real cap: "not done yet" messages in a row WITHOUT a tool call in between (a real call resets it); then the answer is accepted - or, with open acceptance items, ends as "gate"
 SAMPLING = {"temperature": 0.25, "top_p": 0.9, "top_k": 20, "repeat_penalty": 1.0}
-THINK_PREDICT = 4000                # hard cap of a reasoning pass. Measured live: one forced pass ran 8.5k tokens = 4.7 min and changed nothing; 12000 was up to 6.7 min
+THINK_PREDICT = 2500                # hard cap of a reasoning pass. Measured live: one forced pass ran 8.5k tokens = 4.7 min and changed nothing; 12000 was up to 6.7 min
 NUM_PREDICT = 8192                  # ~27 KB of code in one tool call; bigger files go in chunks (append_file). Measured: runaway generations of 16k and 32k tokens (14 min each, no result), and one 16k generation in a real run cost ~5 min at 54 tok/s - 8k loses at most ~2.5 min
 REPEAT_SPAN, REPEAT_MAX_PERIOD = 8000, 2000     # degenerate = the last 8000 chars are one block repeated 4+ times
 FORCED_STOPS = frozenset({"loop", "verify_budget", "budget", "announce", "stage_cap"})     # stops without a model answer that still get the one tool-less summary turn (+ error/'malformed')
@@ -56,7 +56,7 @@ WEB_TOOLS = ("web_search", "web_fetch")
 SPILL_OWN = frozenset({"read_file", "read_files", "outline", "show_symbol", "run", "run_tests", "lint", "search"})   # not spilled again here: a repo file has its own line ranges, the others spill inside CodeTools
 WEB_WORDS = ("http", "www", "search", "online", "docs", "documentation", "latest", "current version", "look up", "google")
 WEB_NOT_NEEDED = "Web lookup not needed yet: write the code first; use web only for an unfamiliar library/API or after the same error happened twice."
-LOOP_NOTE, LOOP_HINT, LOOP_ABORT, LOOP_WINDOW = 2, 3, 4, 16   # similar call+result within the last 16 calls: a note at 2, the nudge + one reasoning pass at 3, the segment ends at 4
+LOOP_NOTE, LOOP_HINT, LOOP_ABORT, LOOP_WINDOW = 2, 3, 6, 16   # similar call+result within the last 16 calls: a note at 2, the nudge + one reasoning pass at 3, the segment ends at 4
 AUTO_EXTEND_MAX = 15               # step budget windows added without asking in a row, counted from the last real progress (60 steps each by default)
 MALFORMED_ABORT = 5                # consecutive replies that are neither a readable tool call nor an answer (garbled call, cut off, empty, thinking only): the segment ends as error/'malformed'
 SERVER_ATTEMPTS = 3                # tries per model call when the server is down or breaks the reply (each one after a wait)
@@ -160,7 +160,8 @@ class CodeEngine:
         self.config, self.llm, self.console = config, llm, console
         self.interactive = interactive
         self.pol = policy_mod.for_repo(self.root)
-        self.model = self.pol.model or (config.get("code") or {}).get("model") or config["models"]["chat"]
+        coding = (config["models"].get("coding") or "").strip()      # what `nightage code-model` / models.coding set
+        self.model = self.pol.model or (config.get("code") or {}).get("model") or (coding if coding.lower() != "auto" else "") or config["models"]["chat"]
         if self.pol.ctx:
             raw_ctx = int(self.pol.ctx)
         else:
@@ -383,10 +384,23 @@ class CodeEngine:
                 msg = self.notes.system_message(self.note_key)
                 if msg:
                     head.append(msg)
-            head.append("REPO MAP (snapshot at session start; new files show up in tool results):\n" + edits.repo_map(self.root, 3500))
+            head.append(self._map_block())
             self._head = head
         for text in self._head:
             self.ctx.add({"role": "system", "content": text})
+
+    def _map_block(self) -> str:
+        """The persistent project map (projectmap.py: kept up to date by the harness at the start and the end of every run, renames carried into the notes) so that no stage has to
+        read the code base to learn what is where. A project without source files gets the plain repo map."""
+        try:
+            projectmap.refresh(self.root)
+            body = projectmap.text(self.root, budget=min(12000, max(3500, int(self.num_ctx * 1.6 * 0.08))))
+        except Exception:  # noqa: BLE001 - the map is a help, never a reason to fail a run
+            body = ""
+        if body:
+            return ("PROJECT MAP (written by the harness from the code and refreshed at the start and the end of every run: it is CURRENT - do not read files only to learn what is where; "
+                    "read the exact ranges of the code you are going to change):\n" + body)
+        return "REPO MAP (snapshot at session start; new files show up in tool results):\n" + edits.repo_map(self.root, 3500)
 
     def _make_note_tool(self):
         from agent.tools.registry import Tool
@@ -648,7 +662,7 @@ class CodeEngine:
         if card and card not in self.briefs:
             self._pin_brief(card)
         done_plan = self.plan.plan is not None and not self.plan.plan.open_items()
-        if plan_mod.should_create(user_text) and (self.plan.plan is None or done_plan):
+        if plan_mod.should_create(user_text) and (self.plan.plan is None or (done_plan and self.stage_goal is None)):      # inside a stage a fully confirmed list stays: a resume must not confirm it all again
             # a finished list does not cover a new big task in the same session (seen live: the next four stages ran without one)
             with self.console.status("[dim]making an acceptance list…[/dim]", spinner="dots"):
                 self.plan.plan = plan_mod.generate(self.llm, self.config, user_text, model=self.model)   # no second model, no cache loss
@@ -1065,14 +1079,14 @@ class CodeEngine:
                 continue
             blanks = 0
             bad, reminded = 0, False                                # a readable call: the streak is over
-            for call in calls[:4]:
+            for call in calls[:8]:
                 self._run_call(call)
                 if classify(call["name"], call.get("arguments")) != "neutral":
                     self._gate_streak = 0                        # the model acted after the nudge: the gate cap counts only blocks answered with text
                 if self._abort_loop or self.phase.ended:
                     break
             if len(calls) > 4 and not self._abort_loop and not self.phase.ended:
-                self.ctx.add({"role": "system", "content": f"Only the first 4 of your {len(calls)} tool calls were run. Send the others again if they are still needed."})
+                self.ctx.add({"role": "system", "content": f"Only the first 8 of your {len(calls)} tool calls were run. Send the others again if they are still needed."})
             if self._abort_loop:
                 n, self._abort_loop = self._abort_loop, 0
                 result.stopped = "loop"
@@ -1453,7 +1467,7 @@ class CodeEngine:
             ph.restart()
             return
         was = ph.ended
-        ph.clean_call(max(0, self._limit("verify_phase_budget", phase_mod.VERIFY_PHASE_BUDGET)))
+        ph.clean_call(0 if self.stage_goal is not None and "verify_phase_budget" not in (self.config.get("coding") or {}) else max(0, self._limit("verify_phase_budget", phase_mod.VERIFY_PHASE_BUDGET)))      # a stage ends by its own goal: that budget cut off productive stages
         if ph.ended and not was:
             self.events.emit("verify_phase_end", calls=ph.clean, tool=name)
 

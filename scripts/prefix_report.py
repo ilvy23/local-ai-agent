@@ -144,7 +144,7 @@ def name_of(message: dict[str, Any]) -> str:
     text = str(message.get("content", ""))
     if message.get("role") == "user":
         return "verified state" if text.startswith("VERIFIED STATE") else "user turn"
-    for prefix, name in (("REPO MAP", "repo map"), ("PROJECT MEMORY", "project memory"), ("BRIEF CARD", "brief card"), ("STAGE GOAL", "stage goal"),
+    for prefix, name in (("REPO MAP", "repo map"), ("PROJECT MAP", "repo map"), ("PROJECT MEMORY", "project memory"), ("BRIEF CARD", "brief card"), ("STAGE GOAL", "stage goal"),
                          ("EARLIER STAGES", "stage notes"), ("DEAD ENDS", "dead ends"), ("PROJECT NOTES SAVED", "session notes")):
         if text.startswith(prefix):
             return name

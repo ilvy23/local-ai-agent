@@ -22,7 +22,7 @@ from typing import Any
 
 from agent.codeagent.loopguard import PHASE_NOTE  # noqa: F401 - the note's one definition (loopguard strips it when comparing copies)
 
-VERIFY_PHASE_MIN, VERIFY_PHASE_BUDGET = 3, 6
+VERIFY_PHASE_MIN, VERIFY_PHASE_BUDGET = 3, 12
 SUMMARY_PREDICT = 400
 INSTRUCTION = ("Write the final answer for the user: what was built (files), what is verified and what is not, what is left. Do not call tools.")
 REASONS = {"loop": "the same kind of call repeated without progress", "verify_budget": "the post-edit verification budget was used up",

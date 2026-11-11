@@ -15,6 +15,12 @@ from tests.test_codeagent_stages import new_engine
 from tests.test_codeagent_supervisor import _isolated as _sv_isolated, make as sv_make  # noqa: F401 - the autouse fixture
 
 
+@pytest.fixture(autouse=True)
+def _short_tasks_are_model_split(monkeypatch):
+    """These tests are about the split MECHANISM, not about the default threshold (1200 characters since a two-sentence task was being cut into generic stages)."""
+    monkeypatch.setattr(ST, "MODEL_SPLIT_MIN_CHARS", 160)
+
+
 TASK = "make a snake game with a menu, high scores and sound"
 LONG_TASK = (TASK + " - it should be playable in the terminal and feel arcade-like, with a short readme at the end. Keep every part in its own"
              " module so that the menu, the scores and the game loop can be tested one by one.")

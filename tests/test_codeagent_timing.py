@@ -321,11 +321,12 @@ def test_stage_prompt_cap_can_be_overridden_by_the_environment(tmp_path, monkeyp
 
     eng, _repo, _o = new_engine(tmp_path, FakeLLM([]))
     plan = ST.StagePlan([ST.Stage(1, "t", "x")], 0, "single", "")
-    assert ST.make_runner(eng, plan).cap == 28000
+    default = min(ST.DEFAULT_CAP, int(0.8 * eng.num_ctx))                       # no config: the window decides, DEFAULT_CAP is the ceiling
+    assert ST.make_runner(eng, plan).cap == default
     monkeypatch.setenv("AGENT_CODE_STAGE_PROMPT_CAP", "16000")
     assert ST.make_runner(eng, plan).cap == 16000
     monkeypatch.setenv("AGENT_CODE_STAGE_PROMPT_CAP", "junk")
-    assert ST.make_runner(eng, plan).cap == 28000
+    assert ST.make_runner(eng, plan).cap == default
 
 
 # ── D4: scripts/speed_trial.py ──────────────────────────────────────────────

@@ -22,7 +22,7 @@ def test_auto_budget_is_set_per_goal_and_reported(tmp_path):
     eng, _repo, _out = engine(tmp_path, FakeLLM([say("done")]))
     assert eng.budget_source == "auto"
     eng.turn("simple snake terminal game")
-    assert eng.budget_source == "auto" and SB.LO <= eng.budget_now < eng.step_ceiling == 60
+    assert eng.budget_source == "auto" and SB.LO <= eng.budget_now < eng.step_ceiling == eng.pol.max_steps
 
 
 def test_a_user_value_is_the_hard_cap_and_source(tmp_path):

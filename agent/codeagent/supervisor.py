@@ -49,7 +49,7 @@ from agent.codeagent.lookact import is_scratch_path
 
 logger = logging.getLogger(__name__)
 
-MAX_IDLE, MAX_SEGMENTS, SERVER_WAIT_S = 4, 200, 1800
+MAX_IDLE, MAX_SEGMENTS, SERVER_WAIT_S = 8, 600, 1800
 AUTO_MIN_BULLETS, AUTO_MIN_CHARS = 3, 600
 SUSPEND_FACTOR, SUSPEND_MIN_S = 10, 30            # wall delta > 10x the monotonic delta (and > 30 s): the PC slept during the segment
 GRADES = ("resume", "resume_pause", "fresh_stage")
@@ -370,6 +370,23 @@ class Supervisor:
         self.decide(st, "scope satisfied, no edits in 2 segments", "closed_by_harness", True, 0)
         return True
 
+    def _confirmed_closes(self, st: Any) -> bool:
+        """Every acceptance item of the stage's list is confirmed and the harness's own stage-end measurement (runner.stage_tests: the tests /
+        checks it already runs, no model) is not red: the stage is done whatever stopped the segment (cap, verify budget, loop ...). Without
+        this a finished stage was resumed into a fresh context where the engine made a NEW acceptance list (a fully confirmed list does not
+        cover a new turn) and confirmed it all over again."""
+        plan = getattr(getattr(self.session, "plan", None), "plan", None)
+        if plan is None or not getattr(plan, "items", None) or plan.open_items():
+            return False
+        check = getattr(self.runner, "stage_tests", None)
+        try:
+            if check is not None and check(st):
+                return False
+        except Exception:  # noqa: BLE001 - a broken measurement is no reason to close a stage
+            return False
+        self.runner.close(st, f"all {len(plan.items)} acceptance items confirmed, tests not red")
+        return True
+
     def _budget_gate(self, st: Any) -> bool:
         """At a segment boundary of an unfinished stage: True when the harness closed it or the budget blocked it (the caller moves on)."""
         if self._harness_closes(st):
@@ -485,6 +502,13 @@ class Supervisor:
                 for per_stage in (u, notes, fresh, self._loop_stops, self._hints):
                     per_stage.clear()
                 idle, current = 0, 0
+                continue
+            if seg.kind != "green" and self._confirmed_closes(st):
+                self.decide(st, stopped or seg.why or "cap", "closed_confirmed", True, 0)
+                u.pop(st.id, None)
+                self._loop_stops.pop(st.id, None)
+                idle = 0
+                self.persist()
                 continue
             if stopped == "fresh_context":
                 # ended on purpose (slow prefill): the same stage in a fresh context, not an unproductive segment - u and idle stay as they are

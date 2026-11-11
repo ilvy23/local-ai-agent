@@ -1,5 +1,8 @@
-"""The speed contract: numbers and behaviours that were each MEASURED on a real run and that keep a long run fast. A change to any of them
-makes a test here fail ON PURPOSE - change the constant and its test together, in one commit, and say in the message what you measured.
+"""The speed contract: numbers and behaviours that were each MEASURED on a real run and that keep a long run fast. The context fill levels
+and mask numbers below are pinned exactly. The step/guard limits (LOOK_BLOCK_AT, THINK_PREDICT, stage cap, family / run-spam aborts) are
+NOT pinned to one value any more: they were loosened after the event log of this machine showed 1164 blocked reads (13 % of all tool
+calls), 122 stage-cap restarts and 70 loop aborts, so those tests only check a sane range and the ordering note < abort. The old
+measurements in the text below are history; the live values are the constants in the code.
 
   MASK .72 / COMPACT .80 / EMERGENCY .92 / FOLD .72   context fill levels (context.py). A mask or compaction makes the server re-read the
         whole prompt (measured 50-77 s for ~50k tokens), so they must come late and rarely; FOLD was 0.45 once and a resumed session
@@ -23,9 +26,9 @@ makes a test here fail ON PURPOSE - change the constant and its test together, i
   LOOK_BLOCK_AT 16      look-steps in a row after which reading is paused (lookact.py). Measured decision: it was 25 and read/search
         streaks up to 54 were observed in a real run (109 look_blocked events), so 25 came too late. The first 6 steps of a stage are free
         (initial orientation reads do not count).
-  No look/wander guard may force a reasoning pass (measured live: one took 4.7 min); only the edit_gap guard (and the loop / paging /
-        failing-test guards of the engine, which fire after a measured repetition) may.
-  The command-family and read-only-run-spam guards (FAMILY 5/8 of the last 12, RUN_SPAM 10/14 of the last 20, loopguard.py) append one
+  No look/wander guard may force a reasoning pass (measured live: one took 4.7 min); (Only the loop / paging /
+        failing-test guards of the engine, which fire after a measured repetition, may.)
+  The command-family and read-only-run-spam guards (FAMILY and RUN_SPAM note/abort, loopguard.py) append one
         line and end the segment; they never set think_steps.
   A stage starts small: system + brief + goal + verified state + notes stay under 8000 tokens even for a repo with 300 files."""
 
@@ -52,28 +55,39 @@ def _isolated(tmp_path, monkeypatch):
     repoaccess.reset_session()
 
 
-def test_the_measured_defaults_are_unchanged():
+def test_the_measured_defaults_stay_in_their_sane_ranges():
+    """Exact values for the context levels; ranges for the loosened limits (see the module docstring for why)."""
     assert (C.MASK_AT, C.COMPACT_AT, C.EMERGENCY_AT, C.FOLD_AT) == (0.72, 0.80, 0.92, 0.72)
-    assert (E.NUM_PREDICT, E.THINK_PREDICT) == (8192, 4000)
-    assert ST.DEFAULT_CAP == 28000
+    assert E.NUM_PREDICT == 8192 and 1000 <= E.THINK_PREDICT <= 4000            # a reasoning pass stays bounded (8.5k tokens = 4.7 min once)
     assert (C.STAGE_MASK_AT, C.STAGE_MASK_GAP, C.MASK_KEEP_TURNS) == (0.70, 0.40, 2)
     assert (C.STAGE_MASK_TARGET, C.MASK_KEEP_TOKENS, C.STAGE_MASK_MIN_GAIN, C.STAGE_MASK_WINDOW, C.STAGE_MASK_RETRY_STEPS) == (0.50, 0.20, 0.25, 8, 6)
-    assert C.STAGE_MASK_AT * ST.DEFAULT_CAP < ST.DEFAULT_CAP and C.MASK_AT * 96 * 1024 > ST.DEFAULT_CAP     # why: the old line lay above the cap
-    assert L.LOOK_BLOCK_AT == 16 and L.FREE_STAGE_STEPS == 6
+    assert C.STAGE_MASK_AT * ST.DEFAULT_CAP < ST.DEFAULT_CAP                      # the stage mask line lies below the cap
+    assert 28000 <= ST.DEFAULT_CAP <= 128000                                     # 28000 gave 122 context restarts; far above ~64k prefill eats the wall time
+    assert 20 <= L.LOOK_BLOCK_AT <= 100 and 1 <= L.FREE_STAGE_STEPS <= 20        # 1164 blocked reads = 13 % of tool calls at 16
+    assert L.LOOK_BLOCK_AT > L.FREE_STAGE_STEPS and L.READ_VOLUME_NUDGE >= 700 and L.TEST_STREAK_NUDGE >= 15
 
 
-def test_the_stage_runner_uses_the_default_cap_unless_configured(tmp_path):
+def test_the_stage_runner_uses_the_default_cap_unless_configured(tmp_path, monkeypatch):
+    """Default = min(DEFAULT_CAP, 80 % of the window); coding.stage_prompt_cap wins over that; the env override wins over both."""
     eng, _repo, _o = new_engine(tmp_path, FakeLLM([]))
     plan = ST.StagePlan([ST.Stage(1, "t", "x")], 0, "single", "")
-    assert ST.make_runner(eng, plan).cap == 28000
+    assert ST.make_runner(eng, plan).cap == min(ST.DEFAULT_CAP, int(0.8 * eng.num_ctx))
+    eng.num_ctx = 10 * ST.DEFAULT_CAP                                              # a huge window: DEFAULT_CAP is the ceiling
+    assert ST.make_runner(eng, plan).cap == ST.DEFAULT_CAP
+    eng.num_ctx = 20000                                                            # a small window: 80 % of it
+    assert ST.make_runner(eng, plan).cap == 16000
+    eng.config = {**eng.config, "coding": {**(eng.config.get("coding") or {}), "stage_prompt_cap": 12345}}
+    assert ST.make_runner(eng, plan).cap == 12345
+    monkeypatch.setenv("AGENT_CODE_STAGE_PROMPT_CAP", "9999")
+    assert ST.make_runner(eng, plan).cap == 9999
 
 
 def test_look_and_wander_guards_never_ask_for_a_reasoning_pass():
     lines = {"n": 0}
     la = L.LookAct(read_lines=lambda: lines["n"], reset_lines=lambda: lines.update(n=0))
     seen = []
-    for i in range(L.LOOK_BLOCK_AT + 15):                              # past the step nudge (10, 20 ...), the pause (16) and beyond
-        lines["n"] = i * 40 if i >= 30 else 0                         # and past the line-volume nudge (700 lines)
+    for i in range(L.LOOK_BLOCK_AT + 30):                              # past the step nudges (every 20), the pause and beyond
+        lines["n"] = i * 100 if i >= L.LOOK_BLOCK_AT else 0           # and past the line-volume nudge
         seen += la.observe("read_file", {"path": "a.py"}, "text")
     assert la.look_streak >= L.LOOK_BLOCK_AT and [r.event for r in seen].count("wander") >= 3
     assert not any(r.think for r in seen if r.event != "edit_gap")
@@ -96,17 +110,17 @@ def test_engine_run_past_every_look_threshold_enables_no_thinking(tmp_path):
     assert all(c["opts"]["num_predict"] == 8192 for c in llm.calls)
 
 
-def test_the_only_lookact_reaction_that_thinks_is_edit_gap():
+def test_no_lookact_reaction_asks_for_thinking():
     la = L.LookAct(read_lines=lambda: 5000, reset_lines=lambda: None)
     reactions = []
-    for i in range(40):
+    for i in range(L.LOOK_BLOCK_AT):
         reactions += la.observe("read_file", {"path": "a.py"}, "text")                         # wander, far past every threshold
     la.observe("write_file", {"path": "a.py"}, "wrote a.py (3 lines)")
     for i in range(L.TEST_STREAK_NUDGE * 3):
         reactions += la.observe("run", {"command": f"python3 a.py {i}"}, "exit code 0")        # edit_gap, twice at most
     assert {r.event for r in reactions} == {"wander", "edit_gap"}
-    assert {r.event for r in reactions if r.think} == {"edit_gap"}
-    assert sum(r.event == "edit_gap" for r in reactions) == 2                                  # bounded: at 15 and 30, never again
+    assert not [r for r in reactions if r.think]                                               # not even edit_gap: a note, never a reasoning pass
+    assert sum(r.event == "edit_gap" for r in reactions) == 2                                  # bounded: at TEST_STREAK_NUDGE and twice that, never again
 
 
 def test_a_stage_starts_small_even_in_a_repo_with_300_files(tmp_path):
@@ -130,10 +144,10 @@ def test_a_stage_starts_small_even_in_a_repo_with_300_files(tmp_path):
 
 
 def test_family_and_run_spam_guards_never_set_think_steps(tmp_path):
-    assert (LG.FAMILY_NOTE, LG.FAMILY_ABORT, LG.RUN_SPAM_NOTE, LG.RUN_SPAM_ABORT) == (5, 8, 10, 14)
+    assert LG.FAMILY_NOTE < LG.FAMILY_ABORT <= LG.FAMILY_WINDOW and LG.RUN_SPAM_NOTE < LG.RUN_SPAM_ABORT <= LG.RUN_SPAM_WINDOW
     eng = new_engine(tmp_path, FakeLLM([]))[0]
     eng.family.reset_stage()
-    for i in range(30):
+    for i in range(LG.GUARD_FREE_CALLS + LG.FAMILY_ABORT + 2):
         args = {"command": f"python3 -c \"import re; open('tests/x.py'); print({i})\""}
         eng._loop_guard("run", args, f"exit code 0\nout {i}" + "z" * i)
         assert eng.think_steps == 0

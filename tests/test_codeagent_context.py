@@ -146,17 +146,20 @@ def test_large_files_return_the_first_lines_with_a_continue_line_and_reads_are_c
     from agent.codeagent import profile as PR
     from agent.codeagent.tools import CodeTools
 
-    big = "class World:\n    def build(self):\n        pass\n\n" + "# padding line\n" * 300
+    from agent.codeagent.tools import READ_MAX_LINES as LINES                        # the line cap of a read without a range
+
+    total = LINES + 64
+    big = "class World:\n    def build(self):\n        pass\n\n" + "# padding line\n" * (total - 4)
     (tmp_path / "world.py").write_text(big)
     ctx = cm(tmp_path)
     tools = CodeTools(tmp_path, PR.detect(tmp_path), ctx)
     out = tools.read_file("world.py")
-    assert "class World" in out and "--- lines 1-250 ---" in out and out.endswith("lines 1-250 of 304; continue with start=251")   # was: an outline only
-    assert tools.read_lines == 250
+    assert "class World" in out and f"--- lines 1-{LINES} ---" in out and out.endswith(f"lines 1-{LINES} of {total}; continue with start={LINES + 1}")   # was: an outline only
+    assert tools.read_lines == LINES
     ol = tools.read_file("world.py", outline=True)
-    assert "OUTLINE" in ol and "class World" in ol and tools.read_lines == 250        # an outline is not a read of the content
+    assert "OUTLINE" in ol and "class World" in ol and tools.read_lines == LINES        # an outline is not a read of the content
     part = tools.read_file("world.py", start=1, end=40)
-    assert "class World" in part and tools.read_lines == 290
+    assert "class World" in part and tools.read_lines == LINES + 40
 
 
 def test_recent_writes_keep_their_real_text_old_ones_are_masked(tmp_path):
@@ -189,3 +192,20 @@ def test_replace_lines_text_stays_clear_while_recent_and_becomes_the_placeholder
     out, saved = mask_observations(msgs, tmp_path, keep_last=10)
     assert saved > 0
     assert PLACEHOLDER.search(_json.loads(out[0]["content"])["arguments"]["new_text"]) and _json.loads(out[-2]["content"])["arguments"]["new_text"] == big
+
+
+def test_the_newest_write_calls_keep_their_text_so_the_model_never_only_sees_placeholders(tmp_path):
+    import json
+
+    from agent.codeagent import context as C
+
+    def write(n):
+        return {"role": "assistant", "content": json.dumps({"tool": "append_file", "arguments": {"path": "MAP.md", "content": f"line {n}\n" * 200}})}
+
+    msgs = []
+    for n in range(4):
+        msgs += [write(n), {"role": "tool", "content": "appended to MAP.md"}]
+    out, saved = C.mask_observations(msgs, tmp_path, keep_last=0)
+    contents = [m["content"] for m in out if m["role"] == "assistant"]
+    assert saved > 0 and all("now on disk" in c for c in contents[: len(contents) - C.KEEP_WRITES])
+    assert all("now on disk" not in c and "line " in c for c in contents[-C.KEEP_WRITES:])                       # the newest ones are verbatim

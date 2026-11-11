@@ -174,13 +174,16 @@ def test_num_predict_and_think_predict_come_from_the_config(tmp_path):
     assert llm.calls[1]["think"] is True and llm.calls[1]["opts"]["num_predict"] == 77
 
 
-def test_defaults_are_unchanged_without_overrides(tmp_path):
+def test_defaults_stay_in_sane_ranges_without_overrides(tmp_path):
+    """The numeric limits were loosened on purpose (event log of this machine: 1164 blocked reads = 13 % of all tool calls, 122 stage-cap
+    restarts, 70 loop aborts), so only ranges and orderings are checked here, not exact values; the engine must use them without overrides."""
     llm = FakeLLM([say("hello")])
     eng, repo, _ = engine(tmp_path, llm)
     eng.turn("x")
-    assert llm.calls[0]["opts"]["num_predict"] == E.NUM_PREDICT == 8192 and E.THINK_PREDICT == 4000
-    assert (E.MAX_GATE_NUDGES, E.GATE_CONSECUTIVE, E.ANNOUNCE_MAX, E.AUTO_EXTEND_MAX, E.LOOP_HINT, E.LOOK_BLOCK_AT) == (12, 4, 8, 15, 3, 16)   # MAX_GATE_NUDGES 4 -> 12: now the hard ceiling, GATE_CONSECUTIVE is the cap
-    assert eng.lookact.block_at == 16
+    assert llm.calls[0]["opts"]["num_predict"] == E.NUM_PREDICT == 8192 and 1000 <= E.THINK_PREDICT <= 4000
+    assert (E.MAX_GATE_NUDGES, E.GATE_CONSECUTIVE, E.ANNOUNCE_MAX, E.AUTO_EXTEND_MAX, E.LOOP_HINT) == (12, 4, 8, 15, 3)   # MAX_GATE_NUDGES 4 -> 12: now the hard ceiling, GATE_CONSECUTIVE is the cap
+    assert E.LOOP_NOTE < E.LOOP_HINT < E.LOOP_ABORT and 20 <= E.LOOK_BLOCK_AT <= 100
+    assert eng.lookact.block_at == E.LOOK_BLOCK_AT
 
 
 def test_look_block_at_comes_from_the_config(tmp_path):
@@ -338,3 +341,12 @@ def test_the_checks_gate_honours_the_consecutive_cap(tmp_path):
     res2 = types.SimpleNamespace(verified=True, not_verified=[], stopped="", reason="")
     eng._check_returns = {}
     assert eng._checks_gate(res2, spent=True) is None and res2.not_verified and res2.verified is False
+
+
+def test_paused_reading_points_a_mapping_task_to_append_file():
+    from agent.codeagent.lookact import LOOK_BLOCK_AT, LookAct
+
+    la = LookAct()
+    la.look_streak = LOOK_BLOCK_AT
+    msg = la.blocked("read_file", {"path": "story.py"})
+    assert msg and "append_file" in msg and "mark_done" in msg

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 import time
@@ -51,7 +52,30 @@ else:
     app.add_typer(story_app, name="story")
     app.add_typer(share_app, name="share")
 
+# The overnight coding run exists only in the private edition (agent/night is on the export deny-list).
+try:
+    from agent.night.cli import night_app
+except ImportError:
+    pass
+else:
+    app.add_typer(night_app, name="night")
+
 __version__ = "0.2.0"
+
+
+@app.command("continue")
+def continue_run(
+    which: str | None = typer.Argument(None, help="a number from the list or an id; omitted = show the list and ask"),
+    list_only: bool = typer.Option(False, "--list", help="only print the list, never ask"),
+    prune: bool = typer.Option(False, "--prune", help="remove entries whose folder or state is gone"),
+    show_all: bool = typer.Option(False, "--all", help="also list entries whose folder is gone (hidden by default)"),
+) -> None:
+    """Everything resumable on this machine - coding sessions and overnight runs of every folder - and continue one IN ITS OWN FOLDER (no cd needed).
+
+    (`resume` is the chat command, hence `continue`.) A night that is running right now is refused with how to stop it."""
+    from agent import resume as resume_mod
+
+    raise typer.Exit(resume_mod.continue_cli(which, list_only, prune, show_all=show_all))
 
 
 def _open_store(config: dict) -> Store:
@@ -958,6 +982,12 @@ def _home() -> int:
     config = load_config()
     if needs_onboarding(config):
         run_onboarding(config)
+    with contextlib.suppress(Exception):   # WhatsApp plumbing must never block the home screen
+        from agent import wa_bridge_runtime
+        from agent.ui.launcher import whatsapp_installed
+
+        if whatsapp_installed():
+            wa_bridge_runtime.ensure_running(config)   # starts detached + self-installs its own stop-on-exit hooks; no-op if disabled/not paired/already running
     returning = False
     while True:
         if returning and console.is_terminal:

@@ -491,17 +491,19 @@ def test_family_key_of_smoke_tests_ignores_the_keys():
     assert LG.family_key("tui_smoke", {"command": " "}) is None
 
 
-def test_twelve_identical_smoke_tests_are_caught_by_the_family_guard(tmp_path):
+def test_repeated_smoke_tests_are_caught_by_the_family_guard(tmp_path):
     eng = fresh(tmp_path, "fam")
     orient(eng)
     cmd = "python3 snake.py"
-    for i in range(1, 5):
+    N, A = LG.FAMILY_NOTE, LG.FAMILY_ABORT
+    for i in range(1, N):
         playt(eng, "tui_smoke", {"command": cmd, "keys": ["Up"] * i}, f"tui_smoke: exited with code 0\nscreen {i} " + "x" * i)
-    playt(eng, "tui_smoke", {"command": cmd, "keys": ["Up"] * 5}, "tui_smoke: exited with code 0\nscreen 5 xxxxx")
-    assert "Same kind of command as your last 4 (tui python3 snake.py)" in [m["content"] for m in eng.ctx.messages if m["role"] == "tool"][-1]
-    for i in range(6, 9):
+    playt(eng, "tui_smoke", {"command": cmd, "keys": ["Up"] * N}, f"tui_smoke: exited with code 0\nscreen {N} " + "x" * N)
+    assert f"Same kind of command as your last {N - 1} (tui python3 snake.py)" in [m["content"] for m in eng.ctx.messages if m["role"] == "tool"][-1]
+    for i in range(N + 1, A + 1):
+        assert not eng._abort_loop
         playt(eng, "tui_smoke", {"command": cmd, "keys": ["Up"] * i}, f"tui_smoke: exited with code 0\nscreen {i} " + "y" * i)
-    assert eng._abort_loop == 8
+    assert eng._abort_loop == A
     assert eng.events.of("loop_abort")[-1]["shape"] == "family" and eng.events.of("loop_abort")[-1]["tool"] == "tui_smoke"
 
 

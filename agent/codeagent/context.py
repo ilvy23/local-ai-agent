@@ -207,11 +207,15 @@ def _mask(messages: list[dict[str, Any]], root: Path, keep_last: int, min_chars:
     saved = stubbed = 0
     pending: tuple[str, dict[str, Any]] | None = None
     seen = _seen_ranges(messages)
+    # The model imitates what it sees: when EVERY one of its earlier writes shows the "[N lines, M chars - now on disk]" placeholder it sends that placeholder as
+    # the content of the next write (seen repeatedly in long runs). The newest KEEP_WRITES write calls therefore stay verbatim, so the model always has real text to copy.
+    writes = [i for i, m in enumerate(messages) if m.get("role") == "assistant" and (c := _parse_call(str(m.get("content", "")))) and c[0] in WRITE_CALLS]
+    keep_writes = set(writes[-KEEP_WRITES:]) if KEEP_WRITES > 0 else set()
     for i, m in enumerate(messages):
         role, content = m.get("role"), str(m.get("content", ""))
         if role == "assistant":
             pending = _parse_call(content)
-            if i < cut and pending and pending[0] in ("write_file", "append_file", "replace_lines", "insert_after") and len(content) >= min_chars:
+            if i < cut and i not in keep_writes and pending and pending[0] in WRITE_CALLS and len(content) >= min_chars:
                 small = json.dumps(compact_call(*pending), ensure_ascii=False)
                 if len(small) < len(content):
                     saved += len(content) - len(small)
@@ -319,6 +323,8 @@ def _clip_text(text: Any, limit: int) -> Any:
     return text if len(text) <= limit else text[:limit] + "...[cut]"       # harness marker: see MARKERS
 
 
+WRITE_CALLS = ("write_file", "append_file", "replace_lines", "insert_after")
+KEEP_WRITES = 2                  # the newest write calls whose text stays in the history (see _mask)
 PLACEHOLDER = re.compile(r"^[ \t]*\[\d+ lines?, \d+ chars - now on disk\][ \t]*$\n?", re.M)   # what the history shows instead of written content
 
 # EVERY text the harness inserts into what the model sees (the model copies what it sees - three real incidents: the on-disk placeholder

@@ -178,20 +178,21 @@ def test_the_cursor_is_dropped_before_the_open_items_under_pressure():
 
 # ── edit pressure ───────────────────────────────────────────────────────────
 
-def test_a_chunk_stage_pauses_reading_at_ten_and_names_the_next_chunk(tmp_path):
-    reads = [call("read_file", path="story.py", start=1 + 10 * i, end=10 + 10 * i) for i in range(12)]
+def test_a_chunk_stage_pauses_reading_at_the_chunk_limit_and_names_the_next_chunk(tmp_path):
+    B = CU.CHUNK_LOOK_BLOCK
+    reads = [call("read_file", path="story.py", start=1 + 10 * i, end=10 + 10 * i) for i in range(B + 2)]
     eng, repo, _out = new_engine(tmp_path, FakeLLM([]), cfg())
     write_lines(repo, "story.py", 406)
     eng.stage_obj, eng.stage_goal, eng.stage_chunk = stage(edited={"story.py": [[1, 200]]}), "g", True
     la = eng.lookact
-    assert la.block_at == 10
-    la.look_streak = 9
+    assert la.block_at == B
+    la.look_streak = B - 1
     assert la.blocked("read_file", {"path": "story.py"}) is None
-    la.look_streak = 10
+    la.look_streak = B
     msg = la.blocked("run", {"command": "sed -n '1,80p' story.py"})
     assert msg and "Rewrite lines 201-280 of story.py now (read them first if needed)." in msg
     assert la.blocked("replace_lines", {"path": "story.py"}) is None
-    assert len(reads) == 12
+    assert len(reads) == B + 2
 
 
 def test_chunk_look_block_is_configurable_and_other_stages_keep_the_general_limit(tmp_path):

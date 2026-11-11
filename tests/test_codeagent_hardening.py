@@ -197,11 +197,15 @@ def test_an_unjudgeable_path_is_blocked_not_a_crash(tmp_path, monkeypatch):
     assert eng.execute("read_file", {"path": "x" * 5000}).startswith("BLOCKED: could not check this call")
 
 
-def test_more_than_four_calls_are_not_silently_dropped(tmp_path):
-    many = {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "list_dir", "arguments": {"path": f"d{i}"}}} for i in range(6)]}
+CALLS_PER_REPLY = 8                                                        # engine._run_calls: `calls[:8]` (a literal there)
+
+
+def test_more_calls_than_one_reply_may_run_are_not_silently_dropped(tmp_path):
+    n = CALLS_PER_REPLY + 2
+    many = {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "list_dir", "arguments": {"path": f"d{i}"}}} for i in range(n)]}
     eng, repo, _ = engine(tmp_path, FakeLLM([many, say("ok")]))
     eng.turn("look")
-    assert any("Only the first 4 of your 6 tool calls" in str(m["content"]) for m in eng.ctx.messages)
+    assert any(f"Only the first {CALLS_PER_REPLY} of your {n} tool calls" in str(m["content"]) for m in eng.ctx.messages)
 
 
 # ── loop guard on the real message shapes ───────────────────────────────────
@@ -417,9 +421,9 @@ def test_unicode_paths_and_a_huge_single_line_file(tmp_path):
     assert "x = 'ü'" in eng.execute("read_file", {"path": "räume/über.py"})
     (repo / "min.js").write_text("var a=1;" * 40000)
     out = eng.execute("read_file", {"path": "min.js"})
-    assert len(out) < 20000 and "1 lines" in out
+    assert len(out) < T.READ_MAX_CHARS + 2000 and "1 lines" in out
     part = eng.execute("read_file", {"path": "min.js", "start": 1, "end": 1})
-    assert len(part) < 15000 and "truncated" in part
+    assert len(part) < T.READ_CAP + 1000 and "truncated" in part
 
 
 # ── context and session ─────────────────────────────────────────────────────

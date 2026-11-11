@@ -1,4 +1,4 @@
-"""read_file without a range is capped (coding.read_max_chars, default 9000 chars / 250 lines) and says where to go on. Measured: text-rewrite
+"""read_file without a range is capped (coding.read_max_chars, default T.READ_MAX_CHARS chars / T.READ_MAX_LINES lines) and says where to go on. Measured: text-rewrite
 tasks were 70 % read_file calls, whole 37 KB files filled every fresh stage context to its cap before anything was edited."""
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ def test_a_long_file_returns_the_first_lines_and_one_continue_line(tmp_path):
     out = t.read_file("big.txt")
     assert len(out) <= T.READ_MAX_CHARS + 300
     last = int(out.rsplit("lines 1-", 1)[1].split(" of ")[0])
-    assert 200 <= last <= 250 and f"line {last:04d}" in out and f"line {last + 1:04d}" not in out
+    assert 200 <= last <= T.READ_MAX_LINES and f"line {last:04d}" in out and f"line {last + 1:04d}" not in out
     assert out.endswith(f"lines 1-{last} of 773; continue with start={last + 1}")
     assert out.count("continue with") == 1 and t.read_lines == last
     nxt = t.read_file("big.txt", start=last + 1, end=last + 40)
@@ -46,8 +46,8 @@ def test_the_cap_is_configurable_and_a_range_has_its_own_larger_cap(tmp_path):
     (tmp_path / "big.txt").write_text(numbered(773, width=60))
     small = tools_for(tmp_path, read_max_chars=3000).read_file("big.txt")
     assert len(small) < 3600 and "continue with start=" in small
-    rng = tools_for(tmp_path).read_file("big.txt", start=1, end=200)               # an explicit range: up to 14000 chars
-    assert len(rng) > T.READ_MAX_CHARS and "line 0200" in rng and "continue with" not in rng
+    rng = tools_for(tmp_path).read_file("big.txt", start=1, end=300)               # an explicit range: up to T.READ_CAP chars
+    assert T.READ_MAX_CHARS < len(rng) <= T.READ_CAP and "line 0300" in rng and "continue with" not in rng
     huge = tools_for(tmp_path).read_file("big.txt", start=1, end=700)
     assert len(huge) <= T.READ_CAP + 300 and "[truncated - use a smaller range]" in huge
 

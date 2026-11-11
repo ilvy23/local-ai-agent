@@ -298,8 +298,8 @@ class DeadEnds:
 
 # ── command families and read-only run spam ─────────────────────────────────
 
-FAMILY_NOTE, FAMILY_ABORT, FAMILY_WINDOW = 5, 8, 12      # calls of one family among the last 12 tool calls: a note at 5, the segment ends at 8
-RUN_SPAM_NOTE, RUN_SPAM_ABORT, RUN_SPAM_WINDOW = 10, 14, 20   # unchanged `run` calls among the last 20 calls without an edit
+FAMILY_NOTE, FAMILY_ABORT, FAMILY_WINDOW = 5, 12, 16      # calls of one family among the last 12 tool calls: a note at 5, the segment ends at 8
+RUN_SPAM_NOTE, RUN_SPAM_ABORT, RUN_SPAM_WINDOW = 10, 24, 30   # unchanged `run` calls among the last 20 calls without an edit
 GUARD_FREE_CALLS = 6             # the first calls of a stage (orientation) never fire either guard
 EDIT_GAP_FREE = 6                # fewer than this many calls since the last edit: an edit/test cycle, never counted
 _PY = re.compile(r"python[\d.]*$")
@@ -450,7 +450,7 @@ class FamilyGuard:
 # ── patterns over the last calls: same tool, alternation, re-reads ──────────
 # Ideas taken from qwen-code's loopDetectionService (Apache-2.0), reimplemented here; see docs/CODE_ENGINE.md, 'Ported ideas'.
 
-SAME_TOOL_NOTE, SAME_TOOL_ABORT = 8, 12          # the same tool name in a row (changing arguments, no edit): a note at 8, the segment ends at 12
+SAME_TOOL_NOTE, SAME_TOOL_ABORT = 8, 20          # the same tool name in a row (changing arguments, no edit): a note at 8, the segment ends at 12
 ALT_NOTE, ALT_ABORT = 3, 4                       # rounds of an A-B-A-B / A-B-C-A-B-C pattern (identical calls, any outcome)
 READ_NOTE, READ_ABORT, READ_WINDOW = 4, 8, 15    # re-reads of text already read among the last 15 calls, no edit in between
 PATTERN_WINDOW = 16

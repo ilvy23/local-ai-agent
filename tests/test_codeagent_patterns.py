@@ -31,33 +31,35 @@ def events(eng):
 
 # ── same tool, changing arguments ───────────────────────────────────────────
 
-def test_twelve_searches_with_changing_patterns_note_at_8_abort_at_12_and_a_dead_end(tmp_path):
+def test_searches_with_changing_patterns_note_at_same_tool_note_abort_at_same_tool_abort_and_a_dead_end(tmp_path):
     eng = fresh(tmp_path, "same")
     orient(eng)
-    for i in range(1, 8):
+    N, A = LG.SAME_TOOL_NOTE, LG.SAME_TOOL_ABORT
+    for i in range(1, N):
         srch(eng, i)
         assert not eng._abort_loop and "in a row" not in last_tool(eng)
-    srch(eng, 8)
-    assert last_tool(eng).count("`search` 8 times in a row") == 1 and "Make an edit now" in last_tool(eng)
-    for i in range(9, 12):
+    srch(eng, N)
+    assert last_tool(eng).count(f"`search` {N} times in a row") == 1 and "Make an edit now" in last_tool(eng)
+    for i in range(N + 1, A):
         srch(eng, i)
         assert "in a row" not in last_tool(eng) and not eng._abort_loop            # one note only
-    srch(eng, 12)
-    assert eng._abort_loop == 12 and eng.think_steps == 0
+    srch(eng, A)
+    assert eng._abort_loop == A and eng.think_steps == 0
     ev = events(eng)[-1]
     assert ev["shape"] == "same_tool" and ev["tool"] == "search"
-    assert any(e["tool"] == "search" and e["out"] == "investigated without editing" and e["times"] == 12 for e in eng.dead_ends.items)
+    assert any(e["tool"] == "search" and e["out"] == "investigated without editing" and e["times"] == A for e in eng.dead_ends.items)
     assert not eng.events.of("loop")                                              # the older ladder never saw an equal outcome
 
 
 def test_run_with_changing_commands_and_no_family_is_the_same_tool(tmp_path):
     eng = fresh(tmp_path, "runs")
     orient(eng)
-    for i in range(1, 12):
+    A = LG.SAME_TOOL_ABORT
+    for i in range(1, A):
         playt(eng, "run", {"command": f"curl -s localhost:80{i}/ping"}, f"exit code 0\npong {i}")
         assert not eng._abort_loop
-    playt(eng, "run", {"command": "curl -s localhost:8012/ping"}, "exit code 0\npong 12")
-    assert eng._abort_loop == 12 and events(eng)[-1]["shape"] == "same_tool"
+    playt(eng, "run", {"command": f"curl -s localhost:80{A}/ping"}, f"exit code 0\npong {A}")
+    assert eng._abort_loop == A and events(eng)[-1]["shape"] == "same_tool"
 
 
 def test_twelve_reads_of_different_files_never_count(tmp_path):
@@ -83,7 +85,7 @@ def test_rereading_the_same_file_with_overlapping_ranges_counts_per_tool_and_pat
     for i in range(6):
         g.observe("read_file", {"path": f"w{i}.py"}, "x", changed=False)
     kinds = []
-    for i in range(14):
+    for i in range(LG.SAME_TOOL_ABORT + 2):
         kinds += [(a, s) for a, s, *_ in g.observe("read_file", {"path": "big.py", "start": 1, "end": 100 + i}, f"part {i}", changed=False,
                                                  read_note=99, read_abort=99)]
     assert ("note", "same_tool") in kinds and ("abort", "same_tool") in kinds
@@ -92,9 +94,9 @@ def test_rereading_the_same_file_with_overlapping_ranges_counts_per_tool_and_pat
 def test_a_failing_write_streak_counts_but_successful_edits_never_do(tmp_path):
     eng = fresh(tmp_path, "writes")
     orient(eng)
-    for i in range(12):
+    for i in range(LG.SAME_TOOL_ABORT):
         playt(eng, "edit_file", {"path": f"m{i}.py", "edits": [{"old": f"x{i}", "new": "y"}]}, f"edit_file: old text {i} not found")
-    assert eng._abort_loop == 12 and events(eng)[-1]["shape"] == "same_tool"
+    assert eng._abort_loop == LG.SAME_TOOL_ABORT and events(eng)[-1]["shape"] == "same_tool"
     eng2 = fresh(tmp_path, "writes_ok")
     orient(eng2)
     for i in range(20):
@@ -152,9 +154,9 @@ def test_same_tool_limits_come_from_the_config(tmp_path):
 def test_the_new_guards_never_force_thinking(tmp_path):
     eng = fresh(tmp_path, "think")
     orient(eng)
-    for i in range(1, 13):
+    for i in range(1, LG.SAME_TOOL_ABORT + 1):
         srch(eng, i)
-    assert eng._abort_loop == 12 and eng.think_steps == 0
+    assert eng._abort_loop == LG.SAME_TOOL_ABORT and eng.think_steps == 0
     assert not [m for m in systems(eng) if "in a row" in m]                      # notes are appended to the result, never a system message
 
 
@@ -164,15 +166,16 @@ def imp(i):
     return {"command": f"python3 -c \"import lena, engine, context, dialogue; print(lena.run({i}), dialogue.line({i * 3}))\""}
 
 
-def test_replay_fourteen_import_probes_note_once_by_the_family_guard_and_stop_at_8(tmp_path):
+def test_replay_import_probes_note_once_by_the_family_guard_and_stop_at_family_abort(tmp_path):
     eng = fresh(tmp_path, "replay")
     orient(eng)
-    for i in range(1, 8):
+    A = LG.FAMILY_ABORT
+    for i in range(1, A):
         playt(eng, "run", imp(i), f"exit code 0\nline {i} " + "o" * i)
     assert last_tool(eng).count("Same kind of command") == 0
     assert not any("times in a row" in str(m["content"]) for m in eng.ctx.messages if m["role"] == "tool")
-    playt(eng, "run", imp(8), "exit code 0\nline 8 oooooooo")
-    assert eng._abort_loop == 8 and events(eng)[-1]["shape"] == "family"
+    playt(eng, "run", imp(A), f"exit code 0\nline {A} " + "o" * A)
+    assert eng._abort_loop == A and events(eng)[-1]["shape"] == "family"
     assert sum("Same kind of command" in str(m["content"]) for m in eng.ctx.messages if m["role"] == "tool") == 1
     assert not any("times in a row" in str(m["content"]) for m in eng.ctx.messages if m["role"] == "tool")        # one voice, not two
 

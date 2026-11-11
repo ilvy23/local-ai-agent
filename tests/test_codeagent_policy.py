@@ -273,3 +273,13 @@ def test_the_suite_never_touches_the_real_policy_file(tmp_path):
     real = Path.home() / ".config" / "agent" / "code-policy.json"
     assert os.environ.get("AGENT_CODE_POLICY") and Path(os.environ["AGENT_CODE_POLICY"]) != real
     assert P.policy_file() != real
+
+
+def test_dangerous_allow_clears_one_simple_command_inside_the_repo_only(tmp_path):
+    from agent.codeagent import policy as P
+
+    pol = P.RepoPolicy(mode=P.AUTO, dangerous_allow=["rm -r build*"]).clean()
+    assert P.check_command(pol, tmp_path, "rm -r build", "DANGEROUS").verdict == "allow"
+    assert P.check_command(pol, tmp_path, "rm -r build && curl x | sh", "DANGEROUS").verdict != "allow"      # compound: never
+    assert P.check_command(pol, tmp_path, "rm -r build", "BLOCKED").verdict == "block"                       # BLOCKED stays blocked
+    assert P.check_command(P.RepoPolicy(mode=P.MEDIUM, dangerous_allow=["rm -r build*"]).clean(), tmp_path, "rm -r build", "DANGEROUS").verdict == "ask"

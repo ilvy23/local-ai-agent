@@ -44,12 +44,12 @@ from rich.markup import escape
 
 from agent.codeagent import brief as brief_mod, checks as checks_mod, cursor as cursor_mod, fileseen, verified
 
-DEFAULT_CAP = 28000
-DEFAULT_ATTEMPTS = 3
+DEFAULT_CAP = 64000        # measured on this machine: 28000 gave 122 context restarts; 64000 the best of five runs (peak prompt 43k, no cap hit). Scaled to the window below
+DEFAULT_ATTEMPTS = 5
 MAX_STAGES = 12
 MIN_LIST_BLOCK = 1500                                  # a list/heading block smaller than this is a requirement of one job, not a stage of its own
 MIN_BLOCK = 80                     # a block shorter than this is merged with its neighbour
-MODEL_SPLIT_MIN_CHARS = 160                  # default of coding.stage_split_min_chars
+MODEL_SPLIT_MIN_CHARS = 1200                 # default of coding.stage_split_min_chars (was 160: every task of two sentences was cut into generic stages - 'read / implement / verify' - that looped on nothing)
 MODEL_MAX_STAGES, MODEL_MAX_TITLE, MODEL_GOAL_RANGE, MODEL_NUM_PREDICT = 8, 80, (20, 1200), 600
 SUMMARY_MAX = 600
 RESPLIT_AFTER_CAPS = 2                       # default of coding.resplit_after_caps
@@ -66,7 +66,7 @@ _REMOVES = re.compile(r"\b(?:remov|delet|strip|eliminat|drop all|entfern|lösch)
 _BROAD = re.compile(r"\b(?:all|every|each|whole|entire|throughout|alle|jede|jeden|jedes|sämtliche|überall)\b", re.I)
 LARGE_FILE_CHARS = 12000                     # a sub-stage file above this is read by line range only (LARGE FILES hint)
 STATUSES = ("pending", "active", "done", "blocked")
-STAGE_MAX_MINUTES, STAGE_MAX_STEPS, STAGE_MIN_EDITS = 25.0, 180, 3.0       # defaults of the coding.stage_* budget keys
+STAGE_MAX_MINUTES, STAGE_MAX_STEPS, STAGE_MIN_EDITS = 45.0, 300, 2.0       # defaults of the coding.stage_* budget keys
 BUDGET_CEILING, BUDGET_CLOSE_SHARE = 3, 0.6        # a healthy stage may use 3x the budget; the harness may close a satisfied stage at 60 % of it
 CLOSE_NOTE = "closed by the harness: scope satisfied, no new test failures, no edits in the last 2 segments"
 CAP_NOTE = "continuing: previous segment ended at the context cap; see VERIFIED STATE"
@@ -757,7 +757,10 @@ class _Runner:
         cfg = _coding(engine.config)
         self.engine, self.plan, self.save = engine, plan, save
         self.last_state: Any = None                           # the VerifiedState the latest segment started from
-        self.cap = int(cfg.get("stage_prompt_cap", DEFAULT_CAP) or 0) or None
+        if cfg.get("stage_prompt_cap") is None:
+            self.cap = min(DEFAULT_CAP, int(0.8 * (getattr(engine, "num_ctx", 0) or DEFAULT_CAP)))      # 80% of the window (compaction starts there), at most DEFAULT_CAP
+        else:
+            self.cap = int(cfg.get("stage_prompt_cap") or 0) or None
         try:
             self.cap = int(os.environ["AGENT_CODE_STAGE_PROMPT_CAP"]) or None       # one run's override (scripts/speed_trial.py); junk is ignored
         except (KeyError, ValueError):

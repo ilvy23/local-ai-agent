@@ -8,10 +8,18 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from agent.codeagent import intake, session, stages as ST, supervisor as SV
 
 from tests.test_codeagent_ranges import NOT_USED, TASK, Recorder, game, stage_ready
 from tests.test_codeagent_stages import cfg
+
+
+@pytest.fixture(autouse=True)
+def _short_tasks_are_model_split(monkeypatch):
+    """These tests are about the split MECHANISM, not about the default threshold (1200 characters since a two-sentence task was being cut into generic stages)."""
+    monkeypatch.setattr(ST, "MODEL_SPLIT_MIN_CHARS", 160)
 
 ONE_STAGE = json.dumps({"stages": [{"title": "Rewrite dialogue.py", "goal": "Rewrite the spoken lines of dialogue.py so they are plain and easy to understand"}]})
 TWO_STAGES = json.dumps({"stages": [

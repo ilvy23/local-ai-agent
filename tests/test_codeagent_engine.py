@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
+from agent.codeagent import engine as E
+from agent.codeagent import lookact
 from agent.codeagent import policy as P
 from agent.codeagent.engine import CodeEngine
 from agent.codeagent.eventlog import EventLog
@@ -193,16 +195,19 @@ def test_tiny_appends_are_cut_off_and_rewrite_loops_get_advice(tmp_path):
 
 def test_wandering_without_writing_is_called_out(tmp_path):
     eng, repo, _ = engine(tmp_path, FakeLLM([]))
-    for _ in range(10):
+    w = 20                                                                     # lookact._wander: a note every 20 look steps (a literal there)
+    for _ in range(w - 1):
         eng._wander_guard("read_file")
-    assert [m["content"] for m in eng.ctx.messages if m["role"] == "system" and "spent 10 steps reading" in m["content"]]
-    for _ in range(15):
+    assert not [m for m in eng.ctx.messages if m["role"] == "system" and "steps reading" in m["content"]]
+    eng._wander_guard("read_file")
+    assert [m["content"] for m in eng.ctx.messages if m["role"] == "system" and f"spent {w} steps reading" in m["content"]]
+    for _ in range(w + w // 2):                                          # 2.5w look steps so far
         eng._wander_guard("search")
     nudges = [m for m in eng.ctx.messages if m["role"] == "system" and "steps reading" in m["content"]]
-    assert len(nudges) == 2                                                    # at 10 and at 20 steps (25 so far) ...
-    for _ in range(10):
+    assert len(nudges) == 2                                                    # at w and at 2w steps (2.5w so far) ...
+    for _ in range(w):                                                   # past 3w
         eng._wander_guard("search")
-    assert any("Stop re-reading" in m["content"] for m in eng.ctx.messages if m["role"] == "system") and eng.think_steps == 0   # ... then every 10 more, never a forced reasoning pass (4.7 min live)
+    assert any("Stop re-reading" in m["content"] for m in eng.ctx.messages if m["role"] == "system") and eng.think_steps == 0   # ... then every w more, never a forced reasoning pass (4.7 min live)
     eng._wander_guard("run")
     assert eng._look_streak == 0 and eng._wander_nudges == 0
 
@@ -371,11 +376,16 @@ def test_repeated_errors_and_cycles_trigger_the_loop_guard(tmp_path):
 
 def test_reading_a_lot_without_writing_gets_a_nudge_once(tmp_path):
     eng, repo, _ = engine(tmp_path, FakeLLM([]))
-    (repo / "a.py").write_text("x = 1\n" * 300)
-    for i in range(1, 4):
-        eng.execute("read_file", {"path": "a.py", "start": 1 + i, "end": 300})
+    (repo / "a.py").write_text("x = 1\n" * 3000)
+    nudges = []
+    for k in range(10):
+        eng.execute("read_file", {"path": "a.py", "start": 1 + 300 * k, "end": 300 * (k + 1)})
+        before = eng.tools.read_lines
         eng._wander_guard("read_file")
-    nudges = [m["content"] for m in eng.ctx.messages if m["role"] == "system" and "without writing or running" in m["content"]]
+        nudges = [m["content"] for m in eng.ctx.messages if m["role"] == "system" and "without writing or running" in m["content"]]
+        assert bool(nudges) == (before >= lookact.READ_VOLUME_NUDGE)           # fires at the volume threshold, not before
+        if nudges:
+            break
     assert len(nudges) == 1 and "write the first piece now" in nudges[0]
     eng.execute("write_file", {"path": "b.py", "content": "y = 2\n"})
     eng._wander_guard("write_file")
@@ -422,13 +432,13 @@ def test_identical_successful_calls_are_a_loop_too_and_end_the_turn(tmp_path):
     assert not getattr(eng2, "_abort_loop", False)
 
 
-def test_a_looping_model_stops_the_turn_after_four_identical_calls(tmp_path):
-    llm = FakeLLM([call("list_dir", path=".")] * 14)
+def test_a_looping_model_stops_the_turn_after_loop_abort_identical_calls(tmp_path):
+    llm = FakeLLM([call("list_dir", path=".")] * (E.LOOP_ABORT + 10))
     eng, repo, out = engine(tmp_path, llm)
     no_summary(eng)
     (repo / "a.py").write_text("x = 1\n")
     res = eng.turn("look around")
-    assert res.stopped == "loop" and "repeated the same call 4 times" in out.getvalue() and len(llm.calls) == 4
+    assert res.stopped == "loop" and f"repeated the same call {E.LOOP_ABORT} times" in out.getvalue() and len(llm.calls) == E.LOOP_ABORT
 
 
 def test_the_history_keeps_edit_calls_in_a_shape_the_model_can_safely_imitate(tmp_path):
@@ -512,16 +522,16 @@ def test_search_resent_with_a_counting_argument_is_a_loop(tmp_path):
     assert eng._abort_loop
 
 
-def test_long_run_of_tests_without_an_edit_gets_one_note_and_a_thinking_step(tmp_path):
+def test_long_run_of_tests_without_an_edit_gets_one_note_and_no_thinking_step(tmp_path):
     eng, repo, out = engine(tmp_path, FakeLLM([]))
     eng.ctx.step = 5
-    for i in range(14):
+    for i in range(lookact.TEST_STREAK_NUDGE - 1):
         eng._edit_gap_guard("run", {"command": f"python3 main.py {i}"}, "exit code 0")
     assert not [m for m in eng.ctx.messages if "without editing" in str(m["content"])] and eng.think_steps == 0
     eng._edit_gap_guard("run", {"command": "python3 main.py x"}, "exit code 0")
-    assert len([m for m in eng.ctx.messages if "without editing" in str(m["content"])]) == 1 and eng.think_steps == 1
+    assert len([m for m in eng.ctx.messages if "without editing" in str(m["content"])]) == 1 and eng.think_steps == 0    # a note, never a forced reasoning pass
     eng._edit_gap_guard("write_file", {"path": ".scratch/drive.py"}, "wrote .scratch/drive.py")      # a scratch write is not progress
-    assert eng._edit_gap == 16
+    assert eng._edit_gap == lookact.TEST_STREAK_NUDGE + 1
     eng._edit_gap_guard("edit_file", {"path": "main.py"}, "edited main.py")                           # a real edit is
     assert eng._edit_gap == 0 and eng._edit_nudges == 0
 
@@ -553,7 +563,7 @@ def test_reading_is_paused_after_a_long_read_streak_until_the_model_changes_some
     eng, repo, out = engine(tmp_path, FakeLLM([]))
     (repo / "a.py").write_text("x = 1\n")
     assert "x = 1" in eng.execute("read_file", {"path": "a.py"})
-    eng._look_streak = 25
+    eng._look_streak = lookact.LOOK_BLOCK_AT
     res = eng.execute("read_file", {"path": "a.py"})
     assert res.startswith("NOT RUN") and "reading is paused" in res and [r for r in eng.events.recent if r["kind"] == "look_blocked"]
     assert eng.execute("search", {"pattern": "x"}).startswith("NOT RUN")
@@ -570,7 +580,7 @@ def test_read_only_shell_commands_count_as_looking_not_as_acting(tmp_path):
     assert not readonly_shell("printf 'x' | python3 main.py | grep y") and not readonly_shell("")
     eng, repo, out = engine(tmp_path, FakeLLM([]))
     (repo / "a.py").write_text("x = 1\n")
-    eng._look_streak = 25
+    eng._look_streak = lookact.LOOK_BLOCK_AT
     assert eng.execute("run", {"command": "sed -n '1,5p' a.py"}).startswith("NOT RUN")
     assert not eng.execute("run", {"command": "python3 a.py"}).startswith("NOT RUN")
 
@@ -608,3 +618,11 @@ def test_salvage_call_types_xml_parameters_by_schema():
           "<parameter=paths>\n[\"a.py\", \"b.py\"]\n</parameter>\n</function>"
     assert salvage_call(xml, _SALVAGE_NAMES, _SALVAGE_SCHEMA)["arguments"] == {"path": "a.py", "start": 3, "outline": True, "paths": ["a.py", "b.py"]}
     assert salvage_call(xml, _SALVAGE_NAMES)["arguments"]["start"] == "3"                      # without a schema nothing is guessed
+
+
+@pytest.mark.parametrize("coding,want", [("coder:1", "coder:1"), ("auto", "m"), ("", "m")])
+def test_engine_model_follows_models_coding_but_not_auto(tmp_path, monkeypatch, coding, want):
+    """`nightage code-model X` writes models.coding; the engine used to ignore it and run the chat model."""
+    monkeypatch.setitem(CFG, "models", {**CFG["models"], "coding": coding})
+    eng, _, _ = engine(tmp_path, FakeLLM([]))
+    assert eng.model == want

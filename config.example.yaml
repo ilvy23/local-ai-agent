@@ -49,6 +49,7 @@ coding:
   prose_model: ''             # optional second text model for graphic passages; empty = off
 whatsapp:
   min_messages: 5
+  bridge_autostart: true
   bridge_url: http://127.0.0.1:8765
   token_file: ~/.config/agent/plugins/whatsapp/bridge/bridge-token.txt
   summarize_batch: 200
@@ -79,6 +80,7 @@ ui:
   allow_html_blocks: false
   mood_emotes: true
   mood_map: {}
+  keep_command_output: false
 memory:
   recall_k: 6
   recall_min_similarity: 0.55

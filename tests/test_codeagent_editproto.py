@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 
-from agent.codeagent import profile as PR, symbols
+from agent.codeagent import engine as E, profile as PR, symbols
 from agent.codeagent.context import ContextManager
 from agent.codeagent.eventlog import EventLog
 from agent.codeagent.tools import CodeTools
@@ -114,11 +114,11 @@ def test_already_applied_counts_as_a_repeat_for_the_loop_guard_and_is_a_look(tmp
     assert lookact.classify("replace_lines", args, res) == "look"
     eng, repo, _ = engine(tmp_path, FakeLLM([]))
     eng.ctx.step = 30
-    for i in range(1, 4):
+    for i in range(1, E.LOOP_ABORT):
         eng._loop_guard("replace_lines", args, res)
         assert eng._abort_loop == 0, i
     eng._loop_guard("replace_lines", args, res)
-    assert eng._abort_loop >= 4                                                               # the ladder still works
+    assert eng._abort_loop >= E.LOOP_ABORT                                                             # the ladder still works
 
 
 # ── 2. relocate a stale stamp ───────────────────────────────────────────────

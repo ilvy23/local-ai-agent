@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 CHUNK_LINES = 80
-CHUNK_LOOK_BLOCK = 10                  # coding.chunk_look_block: the pause threshold of a chunk stage (the general one is 16)
+CHUNK_LOOK_BLOCK = 24                  # coding.chunk_look_block: the pause threshold of a chunk stage (the general one is 16)
 MAX_FILES = 8                          # files named in the cursor text
 CURSOR_CHARS = 500
 INTENT = re.compile(r"\b(?:rewrit|rewrote|rephras|reword|polish|clarif|simplif|improv|clean(?:ing)? up|tidy|translat|refactor|renam|"

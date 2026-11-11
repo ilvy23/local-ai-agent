@@ -29,7 +29,7 @@ from rich.table import Table
 
 from agent import repoaccess
 from agent.llm import READ_TIMEOUT_S, loaded_models_of, set_read_timeout, unload_model
-from agent.codeagent import intake as intake_mod, policy as policy_mod, sessionstore, stages as stages_mod, timing, verified
+from agent.codeagent import intake as intake_mod, projectmap, policy as policy_mod, sessionstore, stages as stages_mod, timing, verified
 from agent.codeagent.engine import CodeEngine, TurnResult
 from agent.codeagent.eventlog import EventLog
 
@@ -711,6 +711,7 @@ def run_session(folder: str | None = None, goal: str | None = None, new: bool = 
                 save_session(engine)
         finally:
             save_session(engine)
+            projectmap.refresh_safe(root)                      # the end of a run: the map follows what this run changed (renames included)
             release_gpu_on_exit(console, llm, config)
     return 0
 
